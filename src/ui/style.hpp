@@ -22,7 +22,7 @@ inline constexpr std::array<std::string_view, 7> kWeekShort{"MON", "TUE", "WED",
 inline constexpr std::array<std::string_view, 7> kWeekLong{"MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY",
                                                            "FRIDAY", "SATURDAY", "SUNDAY"};
 
-enum class Icon { Dumbbell, List, Bars, Calendar };
+enum class Icon { Dumbbell, List, Bars, Calendar, Cigarette };
 
 // Draws inside the square (x, y, s, s). The calendar hole uses the card colour.
 void draw_icon(Canvas& c, Icon icon, int x, int y, int s, Color col);

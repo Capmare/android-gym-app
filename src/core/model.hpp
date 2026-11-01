@@ -16,9 +16,19 @@ struct SetEntry {
     friend bool operator==(const SetEntry&, const SetEntry&) = default;
 };
 
+// A cigarette entry (the "Smoking" exercise).
+struct SmokeEntry {
+    int count{1};
+    std::string brand;
+    bool rolled{false};  // false = from the pack, true = self rolled
+    bool after{false};   // false = before training, true = after training
+    friend bool operator==(const SmokeEntry&, const SmokeEntry&) = default;
+};
+
 struct Session {
     std::int64_t start{};  // Unix time in seconds
     std::vector<SetEntry> sets;
+    std::vector<SmokeEntry> smokes;
 };
 
 using Log = std::vector<Session>;

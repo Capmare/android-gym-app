@@ -25,7 +25,9 @@ void App::set_search(std::string text) {
 }
 
 void App::show_keyboard() {
-    focus_ = page_ == Page::Picker ? Focus::Search : (page_ == Page::PlanEdit ? Focus::PlanName : Focus::None);
+    if (page_ == Page::Picker) focus_ = Focus::Search;
+    else if (page_ == Page::PlanEdit) focus_ = Focus::PlanName;
+    else focus_ = smoking() ? Focus::Brand : Focus::None;
     dirty_ = true;
 }
 
@@ -44,6 +46,7 @@ void App::choose_exercise(int index) {
 
 std::string* App::focused_text() {
     if (focus_ == Focus::Search) return &search_;
+    if (focus_ == Focus::Brand) return &smoke_brand_;
     if (focus_ == Focus::PlanName && editing_ >= 0 && editing_ < static_cast<int>(data_.plans.size()))
         return &data_.plans[static_cast<std::size_t>(editing_)].name;
     return nullptr;

@@ -46,6 +46,12 @@ std::optional<SetEntry> last_set_for(const Log& log, int exercise) {
     return std::nullopt;
 }
 
+std::optional<SmokeEntry> last_smoke(const Log& log) {
+    for (auto s = log.rbegin(); s != log.rend(); ++s)
+        if (!s->smokes.empty()) return s->smokes.back();
+    return std::nullopt;
+}
+
 std::string kg(int x10) {
     return std::format("{}.{}", x10 / 10, x10 % 10);
 }

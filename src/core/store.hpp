@@ -13,6 +13,7 @@ namespace gym {
 //   gym 1
 //   session <unix seconds>
 //   set <exercise index> <weight x10> <reps>
+//   smoke <count> <rolled 0/1> <after training 0/1> <brand>
 //   plan <name>
 //   item <exercise index> <sets> <reps>        (belongs to the last plan)
 //   day <0-6, Monday = 0> <plan index>

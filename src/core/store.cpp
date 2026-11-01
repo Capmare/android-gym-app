@@ -24,6 +24,14 @@ std::vector<std::string_view> split(std::string_view s, char sep) {
     return out;
 }
 
+// Takes the first space-separated word off the front of `s`.
+std::string_view next_word(std::string_view& s) {
+    const auto i = s.find(' ');
+    const auto word = s.substr(0, i);
+    s.remove_prefix(i == std::string_view::npos ? s.size() : i + 1);
+    return word;
+}
+
 template <class T>
 bool to_int(std::string_view s, T& out) {
     const auto* end = s.data() + s.size();
@@ -38,6 +46,7 @@ std::string serialize(const Data& data) {
     for (const auto& session : data.log) {
         out += std::format("session {}\n", session.start);
         for (const auto& e : session.sets) out += std::format("set {} {} {}\n", e.exercise, e.weight_x10, e.reps);
+        for (const auto& s : session.smokes) out += std::format("smoke {} {} {} {}\n", s.count, int{s.rolled}, int{s.after}, s.brand);
     }
     for (const auto& plan : data.plans) {
         out += std::format("plan {}\n", plan.name);
@@ -76,6 +85,19 @@ std::expected<Data, std::string> parse(std::string_view text) {
             if (e.exercise < 0 || e.exercise >= exercise_count) return fail("unknown exercise");
             if (e.weight_x10 < 0 || e.reps < 1) return fail("bad value");
             data.log.back().sets.push_back(e);
+        } else if (line.starts_with("smoke ")) {
+            // smoke <count> <rolled 0/1> <after 0/1> <brand, may have spaces>
+            if (data.log.empty()) return fail("smoke before session");
+            auto rest = line.substr(6);
+            SmokeEntry s;
+            int rolled = 0, after = 0;
+            if (!to_int(next_word(rest), s.count) || !to_int(next_word(rest), rolled) || !to_int(next_word(rest), after))
+                return fail("bad number");
+            if (s.count < 1 || s.count > 99 || rolled < 0 || rolled > 1 || after < 0 || after > 1) return fail("bad value");
+            s.rolled = rolled == 1;
+            s.after = after == 1;
+            s.brand = std::string(rest);
+            data.log.back().smokes.push_back(std::move(s));
         } else if (line.starts_with("plan ")) {
             data.plans.push_back({std::string(line.substr(5)), {}});
         } else if (words[0] == "item" && words.size() == 4) {

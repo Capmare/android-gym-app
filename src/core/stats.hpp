@@ -33,6 +33,7 @@ std::vector<ExerciseSummary> summarize(const Session& s);
 std::vector<ExerciseSummary> personal_bests(const Log& log);
 
 std::optional<SetEntry> last_set_for(const Log& log, int exercise);
+std::optional<SmokeEntry> last_smoke(const Log& log);
 
 // "60.0" for 600.
 std::string kg(int x10);

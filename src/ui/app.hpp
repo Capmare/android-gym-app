@@ -64,6 +64,10 @@ public:
     void set_reps(int v);
     void set_tab(Tab t) noexcept;
 
+    // Smoking (a joke exercise): what to log, and the button that logs it.
+    void set_smoke(int count, std::string brand, bool rolled, bool after);
+    void log_smoke();
+
     // Plan actions
     int new_plan();                    // adds a plan, opens the editor, returns its index
     void edit_plan(int index);
@@ -84,10 +88,12 @@ public:
     int weight_x10() const noexcept { return weight_x10_; }
     int reps() const noexcept { return reps_; }
     bool workout_active() const noexcept { return active_.has_value(); }
+    bool smoking() const noexcept { return exercise_ == kSmoking; }
+    bool keyboard_open() const noexcept { return focus_ != Focus::None; }
 
 private:
     using Time = Clock::time_point;
-    enum class Focus { None, Search, PlanName };
+    enum class Focus { None, Search, PlanName, Brand };
 
     // helpers (app.cpp)
     int u(float v) const;
@@ -110,6 +116,7 @@ private:
 
     void render(Canvas& c, const Input& in);
     int draw_workout(Canvas& c, const Input& in, int y);
+    int draw_smoking(Canvas& c, const Input& in, int y);
     int draw_history(Canvas& c, int y);
     int draw_records(Canvas& c, int y);
     void draw_header(Canvas& c, const Input& in);
@@ -151,6 +158,10 @@ private:
     int editing_ = -1;                   // plan open in the editor
     bool confirm_delete_ = false;
     bool pick_for_plan_ = false;
+    int smoke_count_ = 1;
+    std::string smoke_brand_;
+    bool smoke_rolled_ = false;
+    bool smoke_after_ = false;
     std::string search_;
     std::optional<Muscle> muscle_filter_;
     std::optional<Equipment> equipment_filter_;
@@ -162,6 +173,7 @@ private:
     Time now_{};
     bool dirty_ = false;
     int inset_top_ = 0, inset_bottom_ = 0;
+    int scroll_target_ = -1;             // scroll to this position at the start of the next frame
     int view_top_ = 0, view_bottom_ = 0;
     int s_small_ = 1, s_mid_ = 2, s_big_ = 4;
 };

@@ -109,7 +109,8 @@ void test_images() {
     // The real photo file that goes into the APK.
     const auto real = read_binary_file(GYM_PHOTOS);
     const ImagePack photos(real);
-    CHECK(photos.exercise_count() == static_cast<int>(kExercises.size()));  // same order as the exercise list
+    // The pack lists exercises in the same order. Exercises added later at the end may not have photos yet.
+    CHECK(photos.exercise_count() <= static_cast<int>(kExercises.size()) && photos.exercise_count() >= 195);
     int with_photos = 0;
     for (int i = 0; i < photos.exercise_count(); ++i) with_photos += photos.has(i);
     CHECK(with_photos >= 150);
@@ -118,7 +119,8 @@ void test_images() {
 
 void test_store() {
     Data data;
-    data.log = {{1700000000, {{0, 600, 5}, {1, 1000, 3}}}, {1700090000, {{2, 1400, 1}}}};
+    data.log = {{1700000000, {{0, 600, 5}, {1, 1000, 3}}, {{2, "MARLBORO", false, false}, {1, "GOLDEN VIRGINIA", true, true}}},
+                {1700090000, {{2, 1400, 1}}, {}}};
     data.plans = {{"PUSH DAY", {{0, 4, 8}, {3, 3, 10}}}, {"LEG DAY", {{1, 5, 5}}}};
     data.week = {0, -1, 1, -1, 0, -1, -1};
     const auto text = serialize(data);
@@ -127,6 +129,7 @@ void test_store() {
     if (back) {
         CHECK(back->log.size() == 2);
         CHECK(back->log[0].sets == data.log[0].sets);
+        CHECK(back->log[0].smokes == data.log[0].smokes);   // brand with a space, rolled, after
         CHECK(back->log[1].start == 1700090000);
         CHECK(back->plans == data.plans);
         CHECK(back->week == data.week);
@@ -142,6 +145,10 @@ void test_store() {
     CHECK(!parse("gym 1\nsession 1\nset 999 600 5\n"));  // unknown exercise
     CHECK(!parse("gym 1\nsession 1\nset 0 600 0\n"));     // zero reps
     CHECK(!parse("gym 1\nsession 1\nset 0 abc 5\n"));     // not a number
+    CHECK(!parse("gym 1\nsmoke 1 0 0 CAMEL\n"));            // smoke before session
+    CHECK(!parse("gym 1\nsession 1\nsmoke 0 0 0 CAMEL\n"));  // zero cigarettes
+    CHECK(!parse("gym 1\nsession 1\nsmoke 1 2 0 CAMEL\n"));  // flag must be 0 or 1
+    CHECK(parse("gym 1\nsession 1\nsmoke 3 1 0 \n").has_value());  // empty brand is allowed
     CHECK(!parse("gym 1\nitem 0 3 10\n"));                // item before plan
     CHECK(!parse("gym 1\nplan A\nitem 0 0 10\n"));        // zero sets
     CHECK(!parse("gym 1\nday 0 0\n"));                    // day uses a plan that does not exist
@@ -234,6 +241,72 @@ void test_app() {
 }
 
 
+void test_smoking() {
+    CHECK(kExercises[static_cast<std::size_t>(kSmoking)].name == "Smoking");
+    CHECK(kSmoking == static_cast<int>(kExercises.size()) - 1);   // added at the end: old saved data stays valid
+
+    int saves = 0;
+    App app({}, [&](const Data&) { ++saves; }, 2.0f);
+    Canvas canvas;
+    canvas.resize(720, 2400);
+    const auto t0 = App::Clock::now();
+    app.frame(canvas, Input{}, t0);
+
+    app.select_exercise(kSmoking);
+    CHECK(app.smoking());
+    app.set_smoke(3, "MARLBORO", false, false);   // 3 before training, from the pack
+    app.log_smoke();
+    app.set_smoke(2, "DRUM", true, true);         // 2 after training, self rolled
+    app.log_smoke();
+    app.set_smoke(1, "", false, true);            // no brand
+    app.log_smoke();
+    CHECK(app.workout_active() && app.log().size() == 1);
+    const auto& smokes = app.log()[0].smokes;
+    CHECK(smokes.size() == 3);
+    CHECK(smokes[0] == SmokeEntry(3, "MARLBORO", false, false));
+    CHECK(smokes[1] == SmokeEntry(2, "DRUM", true, true));
+    CHECK(smokes[2].brand == "UNKNOWN");
+    CHECK(app.log()[0].sets.empty() && !app.animating());  // no rest timer for smoking
+    CHECK(saves == 3);
+
+    // The next time you pick Smoking it starts from the last brand and type.
+    app.select_exercise(0);
+    app.select_exercise(kSmoking);
+    CHECK(last_smoke(app.log())->brand == "UNKNOWN");
+
+    // Tap the brand box (found by trying taps down the screen). The keyboard opens and the box
+    // is scrolled into view, above the keyboard.
+    {
+        Canvas phone;
+        phone.resize(720, 1440);
+        int opened_at = -1;
+        for (int y = 200; y < 1300 && opened_at < 0; y += 12) {
+            App a({}, nullptr, 2.0f);
+            a.select_exercise(kSmoking);
+            a.frame(phone, Input{}, t0);
+            a.frame(phone, Input{.x = 360, .y = y, .press_x = 360, .press_y = y, .released = true}, t0);
+            if (a.keyboard_open()) opened_at = y;
+        }
+        CHECK(opened_at > 0);
+    }
+
+    // The keyboard opens for the brand box. Every tab still draws.
+    app.show_keyboard();
+    app.frame(canvas, Input{}, t0);
+    CHECK(app.back());                       // first back closes the keyboard
+    for (const auto tab : {Tab::Workout, Tab::History, Tab::Records, Tab::Plan}) {
+        app.set_tab(tab);
+        app.frame(canvas, Input{}, t0);
+    }
+
+    // Undo removes smokes one by one on the Smoking card. The empty workout then disappears.
+    app.set_tab(Tab::Workout);
+    app.undo_set(); app.undo_set();
+    CHECK(app.log()[0].smokes.size() == 1);
+    app.undo_set();
+    CHECK(app.log().empty() && !app.workout_active());
+}
+
 void test_plans() {
     int saves = 0;
     App app({}, [&](const Data&) { ++saves; }, 2.0f);
@@ -295,6 +368,7 @@ int main() {
     test_images();
     test_store();
     test_plans();
+    test_smoking();
     test_app();
     if (failures == 0) std::puts("all tests passed");
     return failures == 0 ? 0 : 1;

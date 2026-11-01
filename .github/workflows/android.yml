@@ -5,6 +5,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: write   # needed to publish the APK on the Releases page
+
 jobs:
   host-tests:
     runs-on: ubuntu-latest
@@ -37,6 +40,17 @@ jobs:
       - name: Build debug APK
         working-directory: android
         run: gradle assembleDebug --stacktrace
+      # A plain APK file, not a zip. Download link:
+      # https://github.com/<owner>/<repo>/releases/download/latest/gym-log.apk
+      - name: Publish APK on the "latest" release
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp android/app/build/outputs/apk/debug/app-debug.apk gym-log.apk
+          gh release view latest > /dev/null 2>&1 || gh release create latest --prerelease \
+            --title "Latest build" --notes "Newest debug APK. Built automatically on every push." --target "$GITHUB_SHA"
+          gh release upload latest gym-log.apk --clobber
       - uses: actions/upload-artifact@v4
         with:
           name: gym-log-debug-apk

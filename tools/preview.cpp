@@ -21,6 +21,7 @@ int main(int argc, char** argv) {
         {now - 86400, {{1, 1200, 5}, {1, 1200, 5}, {1, 1250, 3}, {9, 2000, 10}}},
         {now - 60, {{0, 825, 5}, {4, 700, 8}}},
     };
+    data.log[2].smokes = {{2, "MARLBORO", false, false}, {1, "DRUM", true, true}};
     data.plans = {{"PUSH DAY", {{0, 4, 8}, {3, 3, 10}, {8, 3, 12}}}, {"LEG DAY", {{1, 5, 5}, {9, 3, 10}}}};
     for (const int d : {0, 3}) data.week[static_cast<std::size_t>(d)] = 0;
     for (const int d : {1, 4}) data.week[static_cast<std::size_t>(d)] = 1;
@@ -63,6 +64,14 @@ int main(int argc, char** argv) {
     save("3_history");
     app.set_tab(Tab::Records);
     save("4_records");
+    app.select_exercise(kSmoking);
+    app.set_smoke(2, "CAMEL", true, false);
+    app.set_tab(Tab::Workout);
+    save("8_smoking");
+    app.show_keyboard();
+    save("9_smoking_keyboard");
+    app.back();
+    app.select_exercise(0);
     app.open_picker(false);
     app.set_search("press");
     save("5_search");

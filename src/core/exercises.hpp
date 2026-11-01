@@ -8,16 +8,16 @@ namespace gym {
 
 enum class Muscle : std::uint8_t {
     Chest, Back, Shoulders, Biceps, Triceps, Forearms, Abs,
-    Quads, Hamstrings, Glutes, Calves, Traps, Cardio, FullBody,
+    Quads, Hamstrings, Glutes, Calves, Traps, Cardio, FullBody, Lungs,
 };
 
 enum class Equipment : std::uint8_t {
     Barbell, Dumbbell, Machine, Cable, Bodyweight, Kettlebell, Band, Other,
 };
 
-inline constexpr std::array<std::string_view, 14> kMuscleNames{
+inline constexpr std::array<std::string_view, 15> kMuscleNames{
     "Chest", "Back", "Shoulders", "Biceps", "Triceps", "Forearms", "Abs",
-    "Quads", "Hamstrings", "Glutes", "Calves", "Traps", "Cardio", "Full Body",
+    "Quads", "Hamstrings", "Glutes", "Calves", "Traps", "Cardio", "Full Body", "Lungs",
 };
 
 inline constexpr std::array<std::string_view, 8> kEquipmentNames{
@@ -264,10 +264,22 @@ inline constexpr auto kTable = std::to_array<Exercise>({
     {"Bear Crawl", FullBody, Bodyweight},
     {"Medicine Ball Slam", FullBody, Other},
     {"Sled Push", FullBody, Other},
+
+    // Just for fun. Logged with brand and type instead of weight and reps.
+    {"Smoking", Lungs, Other},
 });
 }  // namespace detail
 
 inline constexpr const auto& kExercises = detail::kTable;
+
+// Position of the Smoking exercise in the list.
+constexpr int index_of(std::string_view exercise_name) noexcept {
+    for (std::size_t i = 0; i < kExercises.size(); ++i)
+        if (kExercises[i].name == exercise_name) return static_cast<int>(i);
+    return -1;
+}
+inline constexpr int kSmoking = index_of("Smoking");
+static_assert(kSmoking >= 0);
 
 // True if every word of `query` appears in the name, muscle or equipment (ignoring case).
 bool matches(const Exercise& e, std::string_view query);

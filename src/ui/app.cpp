@@ -1,6 +1,7 @@
 #include "ui/app.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <ctime>
 #include <format>
@@ -31,6 +32,14 @@ void draw_icon(Canvas& c, Icon icon, int x, int y, int s, Color col) {
         case Icon::Bars: {
             const int w = s / 4, heights[3] = {s / 2, s, s * 3 / 4};
             for (int i = 0; i < 3; ++i) c.fill_round({x + i * (s - w) / 2, y + s - heights[i], w, heights[i]}, w / 4, col);
+            break;
+        }
+        case Icon::Cigarette: {
+            // Paper in the given colour, orange filter on the left, red ember on the right.
+            const int h = std::max(2, s / 4), by = y + (s - h) / 2;
+            c.fill_round({x, by, s, h}, h / 3, col);
+            c.fill_round({x, by, s / 4, h}, h / 3, kAccent);
+            c.fill_round({x + s - s / 7, by, s / 7, h}, h / 3, kBad);
             break;
         }
         case Icon::Calendar: {
@@ -78,6 +87,15 @@ std::int64_t epoch_now() {
         .count();
 }
 
+// Long brand names must not run into the text on the right.
+std::string shorten(const std::string& s, std::size_t max = 14) {
+    return s.size() <= max ? s : s.substr(0, max - 1) + ".";
+}
+
+bool matches_word(const std::string& a, std::string_view b) {
+    return std::ranges::equal(a, b, [](char x, char y) { return std::toupper(static_cast<unsigned char>(x)) == std::toupper(static_cast<unsigned char>(y)); });
+}
+
 std::string set_text(const SetEntry& e) {
     return std::format("{} KG X {}", kg(e.weight_x10), e.reps);
 }
@@ -103,6 +121,15 @@ int App::u(float v) const {
 void App::select_exercise(int index) {
     const int n = static_cast<int>(kExercises.size());
     exercise_ = ((index % n) + n) % n;
+    if (smoking()) {
+        // Start from what you smoked last time.
+        if (const auto last = last_smoke(data_.log)) {
+            smoke_brand_ = last->brand;
+            smoke_rolled_ = last->rolled;
+        }
+        dirty_ = true;
+        return;
+    }
     // Start from what you did last time.
     if (const auto last = last_set_for(data_.log, exercise_)) {
         weight_x10_ = last->weight_x10;
@@ -129,7 +156,7 @@ void App::set_reps(int v) {
 
 void App::log_set() {
     if (!active_) {
-        data_.log.push_back({epoch_now(), {}});
+        data_.log.push_back({epoch_now(), {}, {}});
         active_ = data_.log.size() - 1;
     }
     data_.log[*active_].sets.push_back({exercise_, weight_x10_, reps_});
@@ -137,14 +164,35 @@ void App::log_set() {
     persist();
 }
 
+// Removes the last entry of the kind you are looking at: a smoke on the Smoking card, otherwise a set.
 void App::undo_set() {
     if (!active_) return;
-    auto& sets = data_.log[*active_].sets;
-    if (!sets.empty()) sets.pop_back();
-    if (sets.empty()) {
+    auto& session = data_.log[*active_];
+    if (smoking() && !session.smokes.empty()) session.smokes.pop_back();
+    else if (!session.sets.empty()) session.sets.pop_back();
+    else if (!session.smokes.empty()) session.smokes.pop_back();
+    if (session.sets.empty() && session.smokes.empty()) {
         data_.log.erase(data_.log.begin() + static_cast<std::ptrdiff_t>(*active_));
         active_.reset();
     }
+    persist();
+}
+
+void App::set_smoke(int count, std::string brand, bool rolled, bool after) {
+    smoke_count_ = std::clamp(count, 1, 40);
+    smoke_brand_ = std::move(brand);
+    smoke_rolled_ = rolled;
+    smoke_after_ = after;
+    dirty_ = true;
+}
+
+void App::log_smoke() {
+    if (!active_) {
+        data_.log.push_back({epoch_now(), {}, {}});
+        active_ = data_.log.size() - 1;
+    }
+    data_.log[*active_].smokes.push_back(
+        {smoke_count_, smoke_brand_.empty() ? "UNKNOWN" : smoke_brand_, smoke_rolled_, smoke_after_});
     persist();
 }
 
@@ -295,7 +343,8 @@ void App::draw_photo(Canvas& c, Rect r, int exercise, bool moving) {
     }
     c.fill_round(r, u(8), kLine);
     const int isz = r.h / 2;
-    draw_icon(c, Icon::Dumbbell, r.x + (r.w - isz) / 2, r.y + (r.h - isz) / 2, isz, kBtn);
+    if (exercise == kSmoking) draw_icon(c, Icon::Cigarette, r.x + (r.w - isz) / 2, r.y + (r.h - isz) / 2, isz, kText);
+    else draw_icon(c, Icon::Dumbbell, r.x + (r.w - isz) / 2, r.y + (r.h - isz) / 2, isz, kBtn);
 }
 
 // ---- screens ----------------------------------------------------------------
@@ -380,6 +429,9 @@ int App::draw_workout(Canvas& c, const Input& in, int y) {
         y = card.bottom() + u(12);
     }
 
+    if (smoking()) {
+        y = draw_smoking(c, in, y);
+    } else {
     // Weight and reps
     {
         const Rect card{m, y, cw, u(124)};
@@ -398,6 +450,7 @@ int App::draw_workout(Canvas& c, const Input& in, int y) {
     // Log button
     if (button(c, in, {m, y, cw, u(64)}, "LOG SET", kAccent, s_mid_)) log_set();
     y += u(64) + u(12);
+    }
 
     // Rest timer: green outline and tinted fill so it stands out
     if (rest_end_ && now_ < *rest_end_) {
@@ -428,24 +481,99 @@ int App::draw_workout(Canvas& c, const Input& in, int y) {
         y += u(48) + u(16);
     }
 
-    // Sets of the running workout, newest first
+    // Sets and smokes of the running workout, newest first
     c.text(m, y, "THIS WORKOUT", s_small_, kDim);
     y += Canvas::text_height(s_small_) + u(8);
     if (!active_) return empty_state(c, y, static_cast<int>(Icon::Dumbbell), "NO SETS YET", "LOG YOUR FIRST SET");
-    const auto& sets = data_.log[*active_].sets;
+    const auto& session = data_.log[*active_];
     const int row_h = u(30);
-    const Rect card{m, y, cw, static_cast<int>(sets.size()) * row_h + u(16)};
-    c.fill_round(card, u(12), kCard);
-    int ry = card.y + u(8);
-    for (std::size_t i = sets.size(); i-- > 0;) {
-        const auto& e = sets[i];
-        const int ty = ry + (row_h - Canvas::text_height(s_mid_)) / 2;
-        c.text(card.x + u(14), ty, std::format("{}. {}", i + 1, kExercises[static_cast<std::size_t>(e.exercise)].name),
-               s_mid_, kText);
-        right_aligned(c, card.right() - u(14), ty, set_text(e), s_mid_, kDim);
-        ry += row_h;
+    int end_y = y;
+    if (!session.sets.empty()) {
+        const auto& sets = session.sets;
+        const Rect card{m, y, cw, static_cast<int>(sets.size()) * row_h + u(16)};
+        c.fill_round(card, u(12), kCard);
+        int ry = card.y + u(8);
+        for (std::size_t i = sets.size(); i-- > 0;) {
+            const auto& e = sets[i];
+            const int ty = ry + (row_h - Canvas::text_height(s_mid_)) / 2;
+            c.text(card.x + u(14), ty, std::format("{}. {}", i + 1, kExercises[static_cast<std::size_t>(e.exercise)].name),
+                   s_mid_, kText);
+            right_aligned(c, card.right() - u(14), ty, set_text(e), s_mid_, kDim);
+            ry += row_h;
+        }
+        end_y = card.bottom();
+        y = end_y + u(12);
     }
-    return card.bottom();
+    if (!session.smokes.empty()) {
+        c.text(m, y, "SMOKING", s_small_, kDim);
+        y += Canvas::text_height(s_small_) + u(8);
+        const auto& smokes = session.smokes;
+        const Rect card{m, y, cw, static_cast<int>(smokes.size()) * row_h + u(16)};
+        c.fill_round(card, u(12), kCard);
+        int ry = card.y + u(8);
+        for (std::size_t i = smokes.size(); i-- > 0;) {
+            const auto& s = smokes[i];
+            const int ty = ry + (row_h - Canvas::text_height(s_mid_)) / 2;
+            c.text(card.x + u(14), ty, std::format("{} {} X {}", s.after ? "AFTER" : "BEFORE", s.count, shorten(s.brand)),
+                   s_mid_, kBad);
+            right_aligned(c, card.right() - u(14), ty, s.rolled ? "ROLLED" : "PACK", s_mid_, kDim);
+            ry += row_h;
+        }
+        end_y = card.bottom();
+    }
+    return end_y;
+}
+
+// The Smoking exercise: how many, before or after training, from the pack or rolled, and the brand.
+int App::draw_smoking(Canvas& c, const Input& in, int y) {
+    const int m = u(16), cw = c.width() - 2 * m;
+    constexpr std::array<std::string_view, 14> kBrands{"Marlboro", "Camel", "Lucky Strike", "Winston", "Chesterfield",
+                                                      "L&M", "Pall Mall", "Parliament", "Newport", "Gauloises",
+                                                      "Davidoff", "Drum", "Amber Leaf", "Golden Virginia"};
+    constexpr std::array<std::string_view, 2> kWhen{"BEFORE TRAINING", "AFTER TRAINING"};
+    constexpr std::array<std::string_view, 2> kType{"FROM THE PACK", "SELF ROLLED"};
+    const auto label = [&](std::string_view text) {
+        c.text(m, y, text, s_small_, kDim);
+        y += Canvas::text_height(s_small_) + u(8);
+    };
+
+    {
+        const Rect card{m, y, cw, u(124)};
+        const int d = stepper(c, in, card, "CIGARETTES", std::format("{}", smoke_count_), {"-2", "-1", "+1", "+2"},
+                              {-2, -1, 1, 2});
+        if (d != 0) smoke_count_ = std::clamp(smoke_count_ + d, 1, 40);
+        y = card.bottom() + u(14);
+    }
+    label("WHEN");
+    if (const int t = chips(c, in, y, kWhen, smoke_after_ ? 1 : 0); t >= 0) smoke_after_ = t == 1;
+    y += u(6);
+    label("TYPE");
+    if (const int t = chips(c, in, y, kType, smoke_rolled_ ? 1 : 0); t >= 0) smoke_rolled_ = t == 1;
+    y += u(6);
+    label("BRAND");
+    {
+        const Rect box{m, y, cw, u(48)};
+        if (text_box(c, in, box, smoke_brand_, "TYPE A BRAND", focus_ == Focus::Brand)) {
+            focus_ = Focus::Brand;
+            // The keyboard will cover the lower half of the screen: put the box just under the header.
+            scroll_target_ = scroll_[static_cast<std::size_t>(tab_)] + box.y - (view_top_ + u(16));
+        }
+        y += box.h + u(10);
+    }
+    {
+        // Quick picks. The one that matches the box is lit.
+        int selected = -1;
+        for (std::size_t i = 0; i < kBrands.size(); ++i)
+            if (matches_word(smoke_brand_, kBrands[i])) selected = static_cast<int>(i);
+        if (const int t = chips(c, in, y, kBrands, selected); t >= 0) {
+            smoke_brand_ = std::string(kBrands[static_cast<std::size_t>(t)]);
+            focus_ = Focus::None;
+        }
+    }
+    y += u(6);
+    if (button(c, in, {m, y, cw, u(64)}, "LOG SMOKE", kBad, s_mid_)) log_smoke();
+    y += u(64) + u(12);
+    return y;
 }
 
 int App::draw_history(Canvas& c, int y) {
@@ -456,7 +584,10 @@ int App::draw_history(Canvas& c, int y) {
         const auto sums = summarize(*s);
         const int head = u(12) + Canvas::text_height(s_mid_) + u(6) + Canvas::text_height(s_small_) + u(10);
         const int row_h = u(28);
-        const Rect card{m, y, cw, head + static_cast<int>(sums.size()) * row_h + u(8)};
+        int before = 0, after = 0;
+        for (const auto& smoke : s->smokes) (smoke.after ? after : before) += smoke.count;
+        const int rows = static_cast<int>(sums.size()) + (s->smokes.empty() ? 0 : 1);
+        const Rect card{m, y, cw, head + rows * row_h + u(8)};
         c.fill_round(card, u(12), kCard);
         c.text(card.x + u(14), card.y + u(12), format_date(s->start), s_mid_, kText);
         c.text(card.x + u(14), card.y + u(12) + Canvas::text_height(s_mid_) + u(6),
@@ -467,6 +598,14 @@ int App::draw_history(Canvas& c, int y) {
             c.text(card.x + u(14), ty, kExercises[static_cast<std::size_t>(e.exercise)].name, s_mid_, kAccent);
             right_aligned(c, card.right() - u(14), ty, std::format("{} X {}", e.sets, set_text(e.top)), s_mid_, kDim);
             ry += row_h;
+        }
+        if (!s->smokes.empty()) {
+            const int ty = ry + (row_h - Canvas::text_height(s_mid_)) / 2;
+            c.text(card.x + u(14), ty, "SMOKING", s_mid_, kBad);
+            std::string text;
+            if (before > 0) text += std::format("{} BEFORE", before);
+            if (after > 0) text += std::format("{}{} AFTER", text.empty() ? "" : "  ", after);
+            right_aligned(c, card.right() - u(14), ty, text, s_mid_, kDim);
         }
         y = card.bottom() + u(12);
     }
@@ -552,8 +691,9 @@ void App::render(Canvas& c, const Input& in) {
 
     const bool main = page_ == Page::Main;
     const int keyboard = focus_ != Focus::None ? keyboard_height() : 0;
+    const bool tab_bar = main && keyboard == 0;  // the keyboard takes the place of the tab bar
     view_top_ = inset_top_ + u(56);
-    view_bottom_ = main ? c.height() - inset_bottom_ - u(64) : c.height() - inset_bottom_ - keyboard;
+    view_bottom_ = tab_bar ? c.height() - inset_bottom_ - u(64) : c.height() - inset_bottom_ - keyboard;
 
     c.clear(kBg);
 
@@ -562,6 +702,10 @@ void App::render(Canvas& c, const Input& in) {
     const int m = u(16);
     const auto id = static_cast<std::size_t>(main ? static_cast<int>(tab_) : (page_ == Page::Picker ? 4 : 5));
     auto& scroll = scroll_[id];
+    if (scroll_target_ >= 0) {
+        scroll = scroll_target_;
+        scroll_target_ = -1;
+    }
     const int y0 = view_top_ + m - scroll;
     int y_end = 0;
     if (page_ == Page::Picker) y_end = draw_picker(c, in, y0);
@@ -582,7 +726,7 @@ void App::render(Canvas& c, const Input& in) {
     // Cover whatever content ran below the visible area.
     c.fill({0, view_bottom_, c.width(), c.height() - view_bottom_}, kBg);
     draw_header(c, in);
-    if (main) draw_tabs(c, in);
+    if (tab_bar) draw_tabs(c, in);
     else if (keyboard > 0) draw_keyboard(c, in);
 }
 
