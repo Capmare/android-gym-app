@@ -16,8 +16,9 @@ int main(int argc, char** argv) {
 
     const std::int64_t now = std::time(nullptr);
     Data data;
+    const int long_a = index_of("Machine Shoulder Press"), long_b = index_of("Romanian Deadlift"), long_c = index_of("Incline Dumbbell Fly");
     data.log = {
-        {now - 3 * 86400, {{0, 800, 5}, {0, 800, 5}, {0, 825, 3}, {3, 450, 8}, {3, 450, 7}}},
+        {now - 3 * 86400, {{0, 800, 5}, {0, 800, 5}, {long_a, 425, 10}, {long_a, 425, 10}, {long_b, 1100, 8}, {long_c, 140, 12}}},
         {now - 86400, {{1, 1200, 5}, {1, 1200, 5}, {1, 1250, 3}, {9, 2000, 10}}},
         {now - 60, {{0, 825, 5}, {4, 700, 8}}},
     };

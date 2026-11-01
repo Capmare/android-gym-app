@@ -54,6 +54,13 @@ void draw_icon(Canvas& c, Icon icon, int x, int y, int s, Color col) {
     }
 }
 
+std::string fit(std::string_view s, int scale, int max_width) {
+    if (Canvas::text_width(s, scale) <= max_width) return std::string(s);
+    std::string out(s);
+    while (!out.empty() && Canvas::text_width(out + ".", scale) > max_width) out.pop_back();
+    return out + ".";
+}
+
 Color lighten(Color c) {
     const auto up = [](Color v) { return std::min<Color>(255, v + 28); };
     return rgb(static_cast<std::uint8_t>(up(c & 0xFF)), static_cast<std::uint8_t>(up((c >> 8) & 0xFF)),
@@ -69,11 +76,6 @@ int weekday_index() {  // Monday = 0
     std::tm tm{};
     localtime_r(&t, &tm);
     return (tm.tm_wday + 6) % 7;
-}
-
-// Long brand names must not run into the text on the right.
-std::string shorten(const std::string& s, std::size_t max = 14) {
-    return s.size() <= max ? s : s.substr(0, max - 1) + ".";
 }
 
 bool matches_word(const std::string& a, std::string_view b) {
@@ -383,10 +385,12 @@ int App::draw_workout(Canvas& c, const Input& in, int y) {
                                      : 0;
             if (item.exercise == exercise_) c.fill_round(row, u(8), kLine);
             const int ty = row.y + (row.h - Canvas::text_height(s_mid_)) / 2;
-            c.text(row.x + u(8), ty, kExercises[static_cast<std::size_t>(item.exercise)].name, s_mid_,
-                   done >= item.sets ? kGood : kText);
-            right_aligned(c, row.right() - u(8), ty, std::format("{}/{} X {}", done, item.sets, item.reps), s_mid_,
-                          done >= item.sets ? kGood : kDim);
+            const std::string progress = std::format("{}/{} X {}", done, item.sets, item.reps);
+            c.text(row.x + u(8), ty,
+                   fit(kExercises[static_cast<std::size_t>(item.exercise)].name, s_mid_,
+                       row.w - u(16) - Canvas::text_width(progress, s_mid_) - u(10)),
+                   s_mid_, done >= item.sets ? kGood : kText);
+            right_aligned(c, row.right() - u(8), ty, progress, s_mid_, done >= item.sets ? kGood : kDim);
             if (tapped_in_view(in, row)) {
                 pick_plan_item(item);
                 dirty_ = true;
@@ -502,9 +506,12 @@ int App::draw_workout(Canvas& c, const Input& in, int y) {
         for (std::size_t i = sets.size(); i-- > 0;) {
             const auto& e = sets[i];
             const int ty = ry + (row_h - Canvas::text_height(s_mid_)) / 2;
-            c.text(card.x + u(14), ty, std::format("{}. {}", i + 1, kExercises[static_cast<std::size_t>(e.exercise)].name),
+            const std::string right = set_text(e);
+            c.text(card.x + u(14), ty,
+                   fit(std::format("{}. {}", i + 1, kExercises[static_cast<std::size_t>(e.exercise)].name), s_mid_,
+                       card.w - u(28) - Canvas::text_width(right, s_mid_) - u(10)),
                    s_mid_, kText);
-            right_aligned(c, card.right() - u(14), ty, set_text(e), s_mid_, kDim);
+            right_aligned(c, card.right() - u(14), ty, right, s_mid_, kDim);
             ry += row_h;
         }
         end_y = card.bottom();
@@ -520,9 +527,12 @@ int App::draw_workout(Canvas& c, const Input& in, int y) {
         for (std::size_t i = smokes.size(); i-- > 0;) {
             const auto& s = smokes[i];
             const int ty = ry + (row_h - Canvas::text_height(s_mid_)) / 2;
-            c.text(card.x + u(14), ty, std::format("{} {} X {}", s.after ? "AFTER" : "BEFORE", s.count, shorten(s.brand)),
+            const std::string_view right = s.rolled ? "ROLLED" : "PACK";
+            c.text(card.x + u(14), ty,
+                   fit(std::format("{} {} X {}", s.after ? "AFTER" : "BEFORE", s.count, s.brand), s_mid_,
+                       card.w - u(28) - Canvas::text_width(right, s_mid_) - u(10)),
                    s_mid_, kBad);
-            right_aligned(c, card.right() - u(14), ty, s.rolled ? "ROLLED" : "PACK", s_mid_, kDim);
+            right_aligned(c, card.right() - u(14), ty, right, s_mid_, kDim);
             ry += row_h;
         }
         end_y = card.bottom();
@@ -582,39 +592,56 @@ int App::draw_smoking(Canvas& c, const Input& in, int y) {
     return y;
 }
 
+// Each workout is a card: date and totals on top, then one block per exercise with its photo.
+// The name has a line of its own, so long names can never run into the numbers.
 int App::draw_history(Canvas& c, const Input& in, int y) {
-    const int m = u(16), cw = c.width() - 2 * m;
+    const int m = u(16), cw = c.width() - 2 * m, pad = u(14);
     if (data_.log.empty())
         return empty_state(c, y, static_cast<int>(Icon::List), "NO WORKOUTS YET", "FINISHED WORKOUTS SHOW UP HERE");
+
+    const int row_h = u(58), thumb_h = u(42), thumb_w = thumb_h * 3 / 2;
+    const int block = Canvas::text_height(s_mid_) + u(6) + Canvas::text_height(s_small_);
+    const int head = u(14) + Canvas::text_height(s_mid_) + u(6) + Canvas::text_height(s_small_) + u(14);
+
     for (std::size_t index = data_.log.size(); index-- > 0;) {
-        const auto s = data_.log.begin() + static_cast<std::ptrdiff_t>(index);
-        const auto sums = summarize(*s);
-        const int head = u(12) + Canvas::text_height(s_mid_) + u(6) + Canvas::text_height(s_small_) + u(10);
-        const int row_h = u(28);
+        const auto& session = data_.log[index];
+        const auto sums = summarize(session);
         int before = 0, after = 0;
-        for (const auto& smoke : s->smokes) (smoke.after ? after : before) += smoke.count;
-        const int rows = static_cast<int>(sums.size()) + (s->smokes.empty() ? 0 : 1);
+        for (const auto& smoke : session.smokes) (smoke.after ? after : before) += smoke.count;
+        const int rows = static_cast<int>(sums.size()) + (session.smokes.empty() ? 0 : 1);
         const Rect card{m, y, cw, head + rows * row_h + u(8)};
         c.fill_round(card, u(12), kCard);
-        c.text(card.x + u(14), card.y + u(12), format_date(s->start), s_mid_, kText);
-        if (button(c, in, {card.right() - u(88), card.y + u(8), u(76), u(34)}, "EDIT", kBtn, s_small_))
-            edit_time(static_cast<int>(index));
-        c.text(card.x + u(14), card.y + u(12) + Canvas::text_height(s_mid_) + u(6),
-               std::format("{} SETS   VOLUME {} KG", s->sets.size(), volume_x10(*s) / 10), s_small_, kDim);
+
+        // Date, EDIT button, totals
+        const Rect edit{card.right() - u(88), card.y + u(8), u(76), u(34)};
+        c.text(card.x + pad, card.y + u(14), fit(format_date(session.start), s_mid_, edit.x - card.x - pad - u(8)),
+               s_mid_, kText);
+        if (button(c, in, edit, "EDIT", kBtn, s_small_)) edit_time(static_cast<int>(index));
+        c.text(card.x + pad, card.y + u(14) + Canvas::text_height(s_mid_) + u(6),
+               std::format("{} SETS  -  {} KG VOLUME", session.sets.size(), volume_x10(session) / 10), s_small_, kDim);
+        c.fill({card.x + pad, card.y + head - u(7), card.w - 2 * pad, 1}, kLine);
+
         int ry = card.y + head;
-        for (const auto& e : sums) {
-            const int ty = ry + (row_h - Canvas::text_height(s_mid_)) / 2;
-            c.text(card.x + u(14), ty, kExercises[static_cast<std::size_t>(e.exercise)].name, s_mid_, kAccent);
-            right_aligned(c, card.right() - u(14), ty, std::format("{} X {}", e.sets, set_text(e.top)), s_mid_, kDim);
+        const auto row = [&](int exercise, std::string_view title, Color title_color, const std::string& detail) {
+            const Rect thumb{card.x + pad, ry + (row_h - thumb_h) / 2, thumb_w, thumb_h};
+            draw_photo(c, thumb, exercise, false);
+            const int tx = thumb.right() + u(12), max_w = card.right() - pad - tx;
+            const int ty = ry + (row_h - block) / 2;
+            c.text(tx, ty, fit(title, s_mid_, max_w), s_mid_, title_color);
+            c.text(tx, ty + Canvas::text_height(s_mid_) + u(6), fit(detail, s_small_, max_w), s_small_, kDim);
             ry += row_h;
-        }
-        if (!s->smokes.empty()) {
-            const int ty = ry + (row_h - Canvas::text_height(s_mid_)) / 2;
-            c.text(card.x + u(14), ty, "SMOKING", s_mid_, kBad);
-            std::string text;
-            if (before > 0) text += std::format("{} BEFORE", before);
-            if (after > 0) text += std::format("{}{} AFTER", text.empty() ? "" : "  ", after);
-            right_aligned(c, card.right() - u(14), ty, text, s_mid_, kDim);
+        };
+        for (const auto& e : sums)
+            row(e.exercise, kExercises[static_cast<std::size_t>(e.exercise)].name, kText,
+                std::format("{} {}  -  TOP {}", e.sets, e.sets == 1 ? "SET" : "SETS", set_text(e.top)));
+        if (!session.smokes.empty()) {
+            std::string detail;
+            if (before > 0) detail += std::format("{} BEFORE", before);
+            if (after > 0) detail += std::format("{}{} AFTER", detail.empty() ? "" : ", ", after);
+            std::string brands;
+            for (const auto& smoke : session.smokes)
+                if (brands.find(smoke.brand) == std::string::npos) brands += (brands.empty() ? "" : ", ") + smoke.brand;
+            row(kSmoking, "SMOKING", kBad, detail + "  -  " + brands);
         }
         y = card.bottom() + u(12);
     }
@@ -633,10 +660,13 @@ int App::draw_records(Canvas& c, int y) {
         c.fill_round(card, u(12), kCard);
         const int block = Canvas::text_height(s_mid_) + u(8) + Canvas::text_height(s_small_);
         const int ty = card.y + (card.h - block) / 2;
-        c.text(card.x + u(14), ty, kExercises[static_cast<std::size_t>(b.exercise)].name, s_mid_, kText);
+        const std::string e1rm = kg(e1rm_x10(b.top)) + " KG";
+        c.text(card.x + u(14), ty,
+               fit(kExercises[static_cast<std::size_t>(b.exercise)].name, s_mid_,
+                   card.w - u(28) - Canvas::text_width(e1rm, s_mid_) - u(10)),
+               s_mid_, kText);
         c.text(card.x + u(14), ty + Canvas::text_height(s_mid_) + u(8), "BEST " + set_text(b.top), s_small_, kDim);
-        right_aligned(c, card.right() - u(14), card.y + (card.h - Canvas::text_height(s_mid_)) / 2,
-                      kg(e1rm_x10(b.top)) + " KG", s_mid_, kAccent);
+        right_aligned(c, card.right() - u(14), card.y + (card.h - Canvas::text_height(s_mid_)) / 2, e1rm, s_mid_, kAccent);
         y = card.bottom() + u(10);
     }
     return y;

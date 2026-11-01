@@ -111,8 +111,12 @@ int App::draw_plan(Canvas& c, const Input& in, int y) {
             int ry = card.y + u(8);
             for (const auto& item : plan.items) {
                 const int ty = ry + (row_h - Canvas::text_height(s_mid_)) / 2;
-                c.text(card.x + u(14), ty, kExercises[static_cast<std::size_t>(item.exercise)].name, s_mid_, kText);
-                right_aligned(c, card.right() - u(14), ty, std::format("{} X {}", item.sets, item.reps), s_mid_, kDim);
+                const std::string right = std::format("{} X {}", item.sets, item.reps);
+                c.text(card.x + u(14), ty,
+                       fit(kExercises[static_cast<std::size_t>(item.exercise)].name, s_mid_,
+                           card.w - u(28) - Canvas::text_width(right, s_mid_) - u(10)),
+                       s_mid_, kText);
+                right_aligned(c, card.right() - u(14), ty, right, s_mid_, kDim);
                 ry += row_h;
             }
             y = card.bottom() + u(14);
@@ -131,7 +135,7 @@ int App::draw_plan(Canvas& c, const Input& in, int y) {
         c.fill_round(card, u(12), kCard);
         const int block = Canvas::text_height(s_mid_) + u(8) + Canvas::text_height(s_small_);
         const int ty = card.y + (card.h - block) / 2;
-        c.text(card.x + u(14), ty, plan.name, s_mid_, kText);
+        c.text(card.x + u(14), ty, fit(plan.name, s_mid_, card.w - u(14) - u(110)), s_mid_, kText);
         c.text(card.x + u(14), ty + Canvas::text_height(s_mid_) + u(8), std::format("{} EXERCISES", plan.items.size()),
                s_small_, kDim);
         if (button(c, in, {card.right() - u(96), card.y + (card.h - u(40)) / 2, u(82), u(40)}, "EDIT", kBtn, s_small_))
@@ -166,7 +170,7 @@ int App::draw_plan_edit(Canvas& c, const Input& in, int y) {
         const auto& ex = kExercises[static_cast<std::size_t>(item.exercise)];
         const Rect card{m, y, cw, u(112)};
         c.fill_round(card, u(12), kCard);
-        c.text(card.x + u(14), card.y + u(12), ex.name, s_mid_, kText);
+        c.text(card.x + u(14), card.y + u(12), fit(ex.name, s_mid_, card.w - u(14) - u(66)), s_mid_, kText);
         c.text(card.x + u(14), card.y + u(12) + Canvas::text_height(s_mid_) + u(5),
                std::format("{} - {}", name(ex.muscle), name(ex.equipment)), s_small_, kDim);
         if (button(c, in, {card.right() - u(52), card.y + u(8), u(44), u(36)}, "X", kBtn, s_small_)) remove = i;

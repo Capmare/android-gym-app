@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <string>
 #include <string_view>
 
 #include "ui/canvas.hpp"
@@ -27,5 +28,8 @@ enum class Icon { Dumbbell, List, Bars, Calendar, Cigarette };
 // Draws inside the square (x, y, s, s). The calendar hole uses the card colour.
 void draw_icon(Canvas& c, Icon icon, int x, int y, int s, Color col);
 Color lighten(Color c);
+
+// Cuts the text and adds "." if it is wider than `max_width` pixels at this scale.
+std::string fit(std::string_view s, int scale, int max_width);
 
 }  // namespace gym::style
