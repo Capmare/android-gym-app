@@ -113,9 +113,12 @@ int App::draw_picker(Canvas& c, const Input& in, int y) {
         const auto& e = kExercises[static_cast<std::size_t>(index)];
         const bool current = !pick_for_plan_ && index == exercise_;
         c.fill_round(row, u(10), current ? kLine : kCard);
+        const int thumb_h = row.h - u(10), thumb_w = thumb_h * 3 / 2;
+        draw_photo(c, {row.x + u(5), row.y + u(5), thumb_w, thumb_h}, index, false);
+        const int tx = row.x + u(5) + thumb_w + u(12);
         const int ty = row.y + (row.h - block) / 2;
-        c.text(row.x + u(14), ty, e.name, s_mid_, kText);
-        c.text(row.x + u(14), ty + Canvas::text_height(s_mid_) + u(5),
+        c.text(tx, ty, e.name, s_mid_, kText);
+        c.text(tx, ty + Canvas::text_height(s_mid_) + u(5),
                std::format("{} - {}", name(e.muscle), name(e.equipment)), s_small_, kDim);
         if (tapped_in_view(in, row)) {
             choose_exercise(index);

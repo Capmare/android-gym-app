@@ -9,6 +9,7 @@
 #include <string_view>
 
 #include "core/exercises.hpp"
+#include "core/images.hpp"
 #include "core/model.hpp"
 #include "ui/canvas.hpp"
 
@@ -39,7 +40,13 @@ public:
     void frame(Canvas& canvas, const Input& in, Clock::time_point now);
 
     // True while the screen must repaint without any touch (rest timer).
-    bool animating() const noexcept { return rest_end_.has_value(); }
+    bool animating() const noexcept { return rest_end_.has_value() || photo_animating_; }
+
+    // Exercise photos. The pack must stay alive while the app uses it. nullptr = no photos.
+    void set_images(const ImagePack* images) noexcept {
+        images_ = images;
+        dirty_ = true;
+    }
 
     // Size in pixels of the status bar and the navigation bar. The app keeps out of them.
     void set_insets(int top, int bottom) noexcept;
@@ -98,6 +105,8 @@ private:
     // Draws a text box. Returns true if it was tapped.
     bool text_box(Canvas& c, const Input& in, Rect r, const std::string& text, std::string_view hint, bool focused);
     int empty_state(Canvas& c, int y, int icon, std::string_view title, std::string_view hint);
+    // Draws the photo of an exercise, or an empty frame if it has none. `moving` flips between start and end.
+    void draw_photo(Canvas& c, Rect r, int exercise, bool moving);
 
     void render(Canvas& c, const Input& in);
     int draw_workout(Canvas& c, const Input& in, int y);
@@ -146,6 +155,9 @@ private:
     std::optional<Muscle> muscle_filter_;
     std::optional<Equipment> equipment_filter_;
     Focus focus_ = Focus::None;
+
+    const ImagePack* images_ = nullptr;
+    bool photo_animating_ = false;       // a moving photo is on screen: keep redrawing
 
     Time now_{};
     bool dirty_ = false;

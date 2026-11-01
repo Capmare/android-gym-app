@@ -1,5 +1,6 @@
 add_library(gymcore STATIC
     core/exercises.cpp
+    core/images.cpp
     core/stats.cpp
     core/store.cpp
     ui/app.cpp

@@ -6,6 +6,7 @@
 #include <string>
 
 #include "core/exercises.hpp"
+#include "core/images.hpp"
 #include "core/stats.hpp"
 #include "core/store.hpp"
 #include "ui/app.hpp"
@@ -72,6 +73,47 @@ void test_exercises() {
     CHECK(matches(kExercises[0], "chest barbell")); // muscle and equipment count
     CHECK(matches(kExercises[0], ""));
     CHECK(!matches(kExercises[0], "squat"));
+}
+
+void test_images() {
+    // A tiny pack made by hand: 2 x 1 pixels, 3 exercises. Only exercise 1 has photos.
+    std::vector<std::byte> file;
+    const auto put = [&](std::uint32_t v, int bytes) {
+        for (int i = 0; i < bytes; ++i) file.push_back(static_cast<std::byte>((v >> (8 * i)) & 0xFF));
+    };
+    for (const char c : std::string_view("GYMIMG01")) file.push_back(static_cast<std::byte>(c));
+    put(2, 2), put(1, 2), put(3, 4);
+    put(0, 4), put(16 + 12, 4), put(0, 4);
+    put(0xF800, 2), put(0x07E0, 2);   // photo 0: red, green
+    put(0x001F, 2), put(0xFFFF, 2);   // photo 1: blue, white
+    const ImagePack pack(file);
+    CHECK(pack.exercise_count() == 3);
+    CHECK(!pack.has(0) && pack.has(1) && !pack.has(2));
+    CHECK(!pack.frame(1, 2) && !pack.frame(3, 0) && !pack.frame(-1, 0));
+    const auto img = pack.frame(1, 1);
+    CHECK(img && img->width == 2 && img->height == 1 && img->rgb565.size() == 4);
+
+    // Drawing scales the photo: left half red, right half green.
+    Canvas c;
+    c.resize(8, 2);
+    c.draw_image({0, 0, 8, 2}, *pack.frame(1, 0));
+    CHECK(c.row(0)[0] == rgb(255, 0, 0) && c.row(1)[7] == rgb(0, 255, 0));
+
+    // Damaged files are refused, not trusted.
+    CHECK(ImagePack(std::span<const std::byte>{}).exercise_count() == 0);
+    const std::vector<std::byte> junk(100, std::byte{7});
+    CHECK(ImagePack(junk).exercise_count() == 0);
+    const std::vector<std::byte> cut(file.begin(), file.begin() + 30);
+    CHECK(!ImagePack(cut).has(1));  // photo data is cut off
+
+    // The real photo file that goes into the APK.
+    const auto real = read_binary_file(GYM_PHOTOS);
+    const ImagePack photos(real);
+    CHECK(photos.exercise_count() == static_cast<int>(kExercises.size()));  // same order as the exercise list
+    int with_photos = 0;
+    for (int i = 0; i < photos.exercise_count(); ++i) with_photos += photos.has(i);
+    CHECK(with_photos >= 150);
+    CHECK(photos.has(0) && photos.has(1) && photos.has(2));
 }
 
 void test_store() {
@@ -147,6 +189,21 @@ void test_app() {
     CHECK(app.log().empty() && !app.workout_active());
     CHECK(saves == 2);
 
+    // Photos on the screen: the workout card and the search list.
+    const auto real = read_binary_file(GYM_PHOTOS);
+    const ImagePack photos(real);
+    app.set_images(&photos);
+    app.set_tab(Tab::Workout);
+    app.frame(canvas, Input{}, t0);
+    CHECK(app.animating());                       // the photo moves, so the screen keeps redrawing
+    app.frame(canvas, Input{}, t0 + 800ms);       // the other photo
+    app.open_picker(false);
+    app.frame(canvas, Input{}, t0);
+    app.back();
+    app.set_images(nullptr);
+    app.frame(canvas, Input{}, t0);
+    CHECK(!app.animating());
+
     // Every tab draws without crashing and paints something.
     app.log_set();
     for (const auto tab : {Tab::Workout, Tab::Plan, Tab::History, Tab::Records}) {
@@ -160,16 +217,19 @@ void test_app() {
         CHECK(varied);
     }
 
-    // A tap on the LOG SET button adds a set. At this size the button is near y = 1114.
+    // A tap on the LOG SET button adds a set. On a tall screen (720 x 2400, no scrolling needed)
+    // the button is at about y = 1257 to 1385.
+    Canvas tall;
+    tall.resize(720, 2400);
     app.set_tab(Tab::Workout);
     const auto before = app.log().back().sets.size();
-    Input tap{.x = 360, .y = 1114, .press_x = 360, .press_y = 1114, .down = false, .released = true};
-    app.frame(canvas, tap, t0);
+    Input tap{.x = 360, .y = 1300, .press_x = 360, .press_y = 1300, .down = false, .released = true};
+    app.frame(tall, tap, t0);
     CHECK(app.log().back().sets.size() == before + 1);
 
     // A drag that ends on the button is a scroll, not a tap.
     tap.moved = true;
-    app.frame(canvas, tap, t0);
+    app.frame(tall, tap, t0);
     CHECK(app.log().back().sets.size() == before + 1);
 }
 
@@ -232,6 +292,7 @@ void test_plans() {
 int main() {
     test_stats();
     test_exercises();
+    test_images();
     test_store();
     test_plans();
     test_app();

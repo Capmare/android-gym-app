@@ -10,6 +10,7 @@ add_subdirectory(src)
 
 add_executable(gym_tests tests/tests.cpp)
 target_link_libraries(gym_tests PRIVATE gymcore)
+target_compile_definitions(gym_tests PRIVATE GYM_PHOTOS="${CMAKE_SOURCE_DIR}/android/app/src/main/assets/exercises.bin")
 
 add_executable(gym_preview tools/preview.cpp)
 target_link_libraries(gym_preview PRIVATE gymcore)

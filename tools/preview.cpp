@@ -1,11 +1,12 @@
 // Draws every screen with sample data and writes PPM images.
-// Usage: preview <output dir> [width height unit inset_top inset_bottom]
+// Usage: preview <output dir> [width height unit inset_top inset_bottom photos.bin]
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
 
+#include "core/images.hpp"
 #include "ui/app.hpp"
 
 int main(int argc, char** argv) {
@@ -32,7 +33,10 @@ int main(int argc, char** argv) {
     const int w = argc > 3 ? std::atoi(argv[2]) : 720, h = argc > 3 ? std::atoi(argv[3]) : 1440;
     const float unit = argc > 4 ? std::strtof(argv[4], nullptr) : 2.0f;
     const int inset_top = argc > 5 ? std::atoi(argv[5]) : 0, inset_bottom = argc > 6 ? std::atoi(argv[6]) : 0;
+    const auto photo_bytes = read_binary_file(argc > 7 ? argv[7] : "android/app/src/main/assets/exercises.bin");
+    const ImagePack photos(photo_bytes);
     App app(std::move(data), nullptr, unit);
+    app.set_images(&photos);
     app.set_insets(inset_top, inset_bottom);
     Canvas canvas;
     canvas.resize(w, h);

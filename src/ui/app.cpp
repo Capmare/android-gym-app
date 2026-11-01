@@ -282,6 +282,22 @@ int App::empty_state(Canvas& c, int y, int icon, std::string_view title, std::st
     return card.bottom();
 }
 
+void App::draw_photo(Canvas& c, Rect r, int exercise, bool moving) {
+    using namespace std::chrono_literals;
+    if (images_) {
+        // Show the start position, then the end position, 0.7 s each.
+        const int phase = moving ? static_cast<int>((now_.time_since_epoch() / 700ms) % ImagePack::kFrames) : 0;
+        if (const auto img = images_->frame(exercise, phase)) {
+            c.draw_image(r, *img);
+            if (moving) photo_animating_ = true;
+            return;
+        }
+    }
+    c.fill_round(r, u(8), kLine);
+    const int isz = r.h / 2;
+    draw_icon(c, Icon::Dumbbell, r.x + (r.w - isz) / 2, r.y + (r.h - isz) / 2, isz, kBtn);
+}
+
 // ---- screens ----------------------------------------------------------------
 
 int App::draw_workout(Canvas& c, const Input& in, int y) {
@@ -337,22 +353,30 @@ int App::draw_workout(Canvas& c, const Input& in, int y) {
         y = card.bottom() + u(12);
     }
 
-    // Exercise picker: arrows step through the list, the middle opens the search.
+    // Exercise card: photo in the middle, arrows on the sides. Tap the photo or the name to search.
     {
-        const Rect card{m, y, cw, u(96)};
-        c.fill_round(card, u(12), kCard);
         const int bs = u(48);
-        const int by = card.y + (card.h - bs) / 2;
+        const int img_w = std::min(cw - 2 * bs - u(28), u(180)), img_h = img_w * 2 / 3;
+        const int text_h = Canvas::text_height(s_mid_) + u(8) + Canvas::text_height(s_small_) + u(8) +
+                           Canvas::text_height(s_small_);
+        const Rect card{m, y, cw, u(14) + img_h + u(12) + text_h + u(14)};
+        c.fill_round(card, u(12), kCard);
+        const Rect photo{card.x + (card.w - img_w) / 2, card.y + u(14), img_w, img_h};
+        const auto& ex = kExercises[static_cast<std::size_t>(exercise_)];
+        draw_photo(c, photo, exercise_, true);
+
+        const int by = photo.y + (photo.h - bs) / 2;
         if (button(c, in, {card.x + u(8), by, bs, bs}, "<", kBtn, s_big_ - 1)) select_exercise(exercise_ - 1);
         if (button(c, in, {card.right() - u(8) - bs, by, bs, bs}, ">", kBtn, s_big_ - 1))
             select_exercise(exercise_ + 1);
-        const Rect mid{card.x + bs + u(16), card.y, card.w - 2 * bs - u(32), card.h};
-        const auto& ex = kExercises[static_cast<std::size_t>(exercise_)];
-        centered(c, mid, card.y + u(14), ex.name, s_mid_, kText);
-        centered(c, mid, card.y + u(14) + Canvas::text_height(s_mid_) + u(8),
-                 std::format("{} - {}", name(ex.muscle), name(ex.equipment)), s_small_, kDim);
-        centered(c, mid, card.bottom() - u(14) - Canvas::text_height(s_small_), "TAP HERE TO SEARCH", s_small_, kAccent);
-        if (tapped_in_view(in, mid)) open_picker(false);
+
+        int ty = photo.bottom() + u(12);
+        centered(c, card, ty, ex.name, s_mid_, kText);
+        ty += Canvas::text_height(s_mid_) + u(8);
+        centered(c, card, ty, std::format("{} - {}", name(ex.muscle), name(ex.equipment)), s_small_, kDim);
+        ty += Canvas::text_height(s_small_) + u(8);
+        centered(c, card, ty, "TAP HERE TO SEARCH", s_small_, kAccent);
+        if (tapped_in_view(in, {card.x + bs + u(16), card.y, card.w - 2 * (bs + u(16)), card.h})) open_picker(false);
         y = card.bottom() + u(12);
     }
 
@@ -521,6 +545,7 @@ void App::draw_tabs(Canvas& c, const Input& in) {
 // ---- frame ------------------------------------------------------------------
 
 void App::render(Canvas& c, const Input& in) {
+    photo_animating_ = false;
     s_small_ = std::max(1, u(1.2f));
     s_mid_ = std::max(2, u(1.6f));
     s_big_ = std::max(3, u(2.6f));

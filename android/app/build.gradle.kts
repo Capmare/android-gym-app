@@ -16,6 +16,11 @@ android {
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }
 
+    // Keep the photo file uncompressed. Android then maps it into memory instead of copying it.
+    androidResources {
+        noCompress += "bin"
+    }
+
     externalNativeBuild {
         cmake {
             path = file("src/main/cpp/CMakeLists.txt")

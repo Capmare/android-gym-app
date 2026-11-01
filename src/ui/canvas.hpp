@@ -6,6 +6,8 @@
 #include <string_view>
 #include <vector>
 
+#include "core/images.hpp"
+
 namespace gym {
 
 // Pixel layout: bytes R, G, B, A in memory. This matches Android RGBA_8888.
@@ -38,6 +40,8 @@ public:
     void fill(Rect r, Color c);
     void fill_round(Rect r, int radius, Color c);
     void text(int x, int y, std::string_view s, int scale, Color c);
+    // Scales a photo to fill `dst` (smooth scaling).
+    void draw_image(Rect dst, const Image& img);
 
     static constexpr int text_width(std::string_view s, int scale) noexcept {
         return s.empty() ? 0 : static_cast<int>(s.size()) * 6 * scale - scale;

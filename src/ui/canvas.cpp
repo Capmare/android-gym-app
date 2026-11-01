@@ -102,4 +102,46 @@ void Canvas::text(int x, int y, std::string_view s, int scale, Color c) {
     }
 }
 
+void Canvas::draw_image(Rect dst, const Image& img) {
+    if (img.width <= 0 || img.height <= 0 || dst.w <= 0 || dst.h <= 0 ||
+        img.rgb565.size() < static_cast<std::size_t>(img.width) * static_cast<std::size_t>(img.height) * 2)
+        return;
+    const auto* src = reinterpret_cast<const unsigned char*>(img.rgb565.data());
+    const auto pixel = [&](int x, int y) {
+        const std::size_t i = (static_cast<std::size_t>(y) * static_cast<std::size_t>(img.width) + static_cast<std::size_t>(x)) * 2;
+        return static_cast<unsigned>(src[i]) | (static_cast<unsigned>(src[i + 1]) << 8);
+    };
+
+    // For each output column or row: the two source pixels to mix, and how much of the second (0..255).
+    struct Tap { int a, b, weight; };
+    const auto make = [](int out_size, int in_size) {
+        std::vector<Tap> taps(static_cast<std::size_t>(out_size));
+        for (int i = 0; i < out_size; ++i) {
+            const int pos = std::clamp(((2 * i + 1) * in_size * 128) / out_size - 128, 0, (in_size - 1) * 256);
+            taps[static_cast<std::size_t>(i)] = {pos >> 8, std::min((pos >> 8) + 1, in_size - 1), pos & 255};
+        }
+        return taps;
+    };
+    const auto cols = make(dst.w, img.width), rows = make(dst.h, img.height);
+
+    const int x0 = std::max(dst.x, 0), x1 = std::min(dst.right(), w_);
+    const int y0 = std::max(dst.y, 0), y1 = std::min(dst.bottom(), h_);
+    for (int y = y0; y < y1; ++y) {
+        const Tap& ty = rows[static_cast<std::size_t>(y - dst.y)];
+        auto* out = px_.data() + static_cast<std::size_t>(y) * static_cast<std::size_t>(w_);
+        for (int x = x0; x < x1; ++x) {
+            const Tap& tx = cols[static_cast<std::size_t>(x - dst.x)];
+            const unsigned p00 = pixel(tx.a, ty.a), p10 = pixel(tx.b, ty.a), p01 = pixel(tx.a, ty.b), p11 = pixel(tx.b, ty.b);
+            const auto mix = [&](unsigned shift, unsigned mask, unsigned scale_to_255) {
+                const int a = static_cast<int>((p00 >> shift) & mask), b = static_cast<int>((p10 >> shift) & mask);
+                const int c = static_cast<int>((p01 >> shift) & mask), d = static_cast<int>((p11 >> shift) & mask);
+                const int top = a * (256 - tx.weight) + b * tx.weight, bottom = c * (256 - tx.weight) + d * tx.weight;
+                const int v = (top * (256 - ty.weight) + bottom * ty.weight) >> 16;  // 0..mask
+                return static_cast<std::uint8_t>(v * static_cast<int>(scale_to_255) / static_cast<int>(mask));
+            };
+            out[x] = rgb(mix(11, 31, 255), mix(5, 63, 255), mix(0, 31, 255));
+        }
+    }
+}
+
 }  // namespace gym

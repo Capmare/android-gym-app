@@ -2,6 +2,7 @@
 // NativeActivity loads this library and calls android_main().
 #include <jni.h>
 
+#include <android/asset_manager.h>
 #include <android/configuration.h>
 #include <android/input.h>
 #include <android/log.h>
@@ -16,6 +17,7 @@
 #include <filesystem>
 #include <memory>
 
+#include "core/images.hpp"
 #include "core/store.hpp"
 #include "ui/app.hpp"
 
@@ -31,6 +33,8 @@ struct State {
     int settle_frames = 0;      // extra redraws after start-up, while Android finishes the layout
     gym::Canvas canvas;
     std::unique_ptr<gym::App> app;
+    AAsset* photo_asset = nullptr;   // exercise photos, mapped from the APK
+    gym::ImagePack photos;
     gym::Input in;
     int slop = 20;          // pixels a finger may move and still count as a tap
     bool need_draw = true;
@@ -188,16 +192,27 @@ void android_main(android_app* app) {
         gym::load_file(file), [file](const gym::Data& data) { gym::save_file(file, data); }, unit);
     app->activity->vm->AttachCurrentThread(&state.env, nullptr);
 
+    // The photo file stays uncompressed in the APK (see build.gradle.kts), so this does not copy it.
+    state.photo_asset = AAssetManager_open(app->activity->assetManager, "exercises.bin", AASSET_MODE_BUFFER);
+    if (state.photo_asset) {
+        const auto* bytes = static_cast<const std::byte*>(AAsset_getBuffer(state.photo_asset));
+        const auto size = static_cast<std::size_t>(AAsset_getLength(state.photo_asset));
+        if (bytes) state.photos = gym::ImagePack({bytes, size});
+    }
+    state.app->set_images(&state.photos);
+
     while (!app->destroyRequested) {
         // Wait for events. While the rest timer runs, wake up 5 times a second.
-        const bool ticking = state.app->animating() || state.settle_frames > 0;
-        const int timeout_ms = ticking ? 200 : -1;
+        // Wake up on a timer only while something moves and the screen is visible.
+        const bool ticking = state.window && (state.app->animating() || state.settle_frames > 0);
+        const int timeout_ms = ticking ? 250 : -1;
         int events = 0;
         android_poll_source* source = nullptr;
         int timeout = timeout_ms;
         while (ALooper_pollOnce(timeout, nullptr, &events, reinterpret_cast<void**>(&source)) >= 0) {
             if (source) source->process(app, source);
             if (app->destroyRequested) {
+                if (state.photo_asset) AAsset_close(state.photo_asset);
                 app->activity->vm->DetachCurrentThread();
                 return;
             }
