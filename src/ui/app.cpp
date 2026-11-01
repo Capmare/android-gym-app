@@ -7,6 +7,7 @@
 #include <format>
 
 #include "core/stats.hpp"
+#include "ui/clock.hpp"
 #include "ui/style.hpp"
 
 namespace gym {
@@ -63,28 +64,11 @@ Color lighten(Color c) {
 
 namespace {
 
-constexpr std::array<std::string_view, 7> kDays{"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
-constexpr std::array<std::string_view, 12> kMonths{"JAN", "FEB", "MAR", "APR", "MAY", "JUN",
-                                                   "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
-
-std::string format_date(std::int64_t epoch) {
-    const std::time_t t = static_cast<std::time_t>(epoch);
-    std::tm tm{};
-    localtime_r(&t, &tm);
-    return std::format("{} {:02} {} {}  {:02}:{:02}", kDays[tm.tm_wday % 7], tm.tm_mday, kMonths[tm.tm_mon % 12],
-                       tm.tm_year + 1900, tm.tm_hour, tm.tm_min);
-}
-
 int weekday_index() {  // Monday = 0
     const std::time_t t = std::time(nullptr);
     std::tm tm{};
     localtime_r(&t, &tm);
     return (tm.tm_wday + 6) % 7;
-}
-
-std::int64_t epoch_now() {
-    return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
-        .count();
 }
 
 // Long brand names must not run into the text on the right.
@@ -226,12 +210,22 @@ bool App::back() {
         page_ = pick_for_plan_ ? Page::PlanEdit : Page::Main;
         return true;
     }
-    if (page_ == Page::PlanEdit) {
+    if (page_ == Page::PlanEdit || page_ == Page::TimeEdit) {
         page_ = Page::Main;
         confirm_delete_ = false;
         return true;
     }
     return false;
+}
+
+std::size_t App::scroll_slot() const noexcept {
+    switch (page_) {
+        case Page::Picker: return 4;
+        case Page::PlanEdit: return 5;
+        case Page::TimeEdit: return 6;
+        case Page::Main: break;
+    }
+    return static_cast<std::size_t>(tab_);
 }
 
 void App::persist() {
@@ -482,8 +476,20 @@ int App::draw_workout(Canvas& c, const Input& in, int y) {
     }
 
     // Sets and smokes of the running workout, newest first
-    c.text(m, y, "THIS WORKOUT", s_small_, kDim);
-    y += Canvas::text_height(s_small_) + u(8);
+    if (active_) {
+        // Started at ...: tap to change it (for adding exercises later).
+        const std::time_t t = static_cast<std::time_t>(data_.log[*active_].start);
+        std::tm tm{};
+        localtime_r(&t, &tm);
+        const std::string label = std::format("STARTED {:02}:{:02}  EDIT", tm.tm_hour, tm.tm_min);
+        const int bw = Canvas::text_width(label, s_small_) + u(24), bh = u(34);
+        c.text(m, y + (bh - Canvas::text_height(s_small_)) / 2, "THIS WORKOUT", s_small_, kDim);
+        if (button(c, in, {m + cw - bw, y, bw, bh}, label, kBtn, s_small_)) edit_time(static_cast<int>(*active_));
+        y += bh + u(8);
+    } else {
+        c.text(m, y, "THIS WORKOUT", s_small_, kDim);
+        y += Canvas::text_height(s_small_) + u(8);
+    }
     if (!active_) return empty_state(c, y, static_cast<int>(Icon::Dumbbell), "NO SETS YET", "LOG YOUR FIRST SET");
     const auto& session = data_.log[*active_];
     const int row_h = u(30);
@@ -576,11 +582,12 @@ int App::draw_smoking(Canvas& c, const Input& in, int y) {
     return y;
 }
 
-int App::draw_history(Canvas& c, int y) {
+int App::draw_history(Canvas& c, const Input& in, int y) {
     const int m = u(16), cw = c.width() - 2 * m;
     if (data_.log.empty())
         return empty_state(c, y, static_cast<int>(Icon::List), "NO WORKOUTS YET", "FINISHED WORKOUTS SHOW UP HERE");
-    for (auto s = data_.log.rbegin(); s != data_.log.rend(); ++s) {
+    for (std::size_t index = data_.log.size(); index-- > 0;) {
+        const auto s = data_.log.begin() + static_cast<std::ptrdiff_t>(index);
         const auto sums = summarize(*s);
         const int head = u(12) + Canvas::text_height(s_mid_) + u(6) + Canvas::text_height(s_small_) + u(10);
         const int row_h = u(28);
@@ -590,6 +597,8 @@ int App::draw_history(Canvas& c, int y) {
         const Rect card{m, y, cw, head + rows * row_h + u(8)};
         c.fill_round(card, u(12), kCard);
         c.text(card.x + u(14), card.y + u(12), format_date(s->start), s_mid_, kText);
+        if (button(c, in, {card.right() - u(88), card.y + u(8), u(76), u(34)}, "EDIT", kBtn, s_small_))
+            edit_time(static_cast<int>(index));
         c.text(card.x + u(14), card.y + u(12) + Canvas::text_height(s_mid_) + u(6),
                std::format("{} SETS   VOLUME {} KG", s->sets.size(), volume_x10(*s) / 10), s_small_, kDim);
         int ry = card.y + head;
@@ -655,7 +664,8 @@ void App::draw_header(Canvas& c, const Input& in) {
     } else {
         if (button(c, in, {u(8), top + u(8), u(40), u(40)}, "<", kBtn, s_mid_, false)) back();
         c.text(u(60), top + (bar - Canvas::text_height(s_mid_)) / 2,
-               page_ == Page::Picker ? "CHOOSE EXERCISE" : "EDIT PLAN", s_mid_, kText);
+               page_ == Page::Picker ? "CHOOSE EXERCISE" : (page_ == Page::TimeEdit ? "WORKOUT TIME" : "EDIT PLAN"),
+               s_mid_, kText);
     }
 }
 
@@ -700,8 +710,7 @@ void App::render(Canvas& c, const Input& in) {
     // Content first. The header and tab bar are painted on top, so
     // scrolled content that goes under them is hidden.
     const int m = u(16);
-    const auto id = static_cast<std::size_t>(main ? static_cast<int>(tab_) : (page_ == Page::Picker ? 4 : 5));
-    auto& scroll = scroll_[id];
+    auto& scroll = scroll_[scroll_slot()];
     if (scroll_target_ >= 0) {
         scroll = scroll_target_;
         scroll_target_ = -1;
@@ -710,10 +719,11 @@ void App::render(Canvas& c, const Input& in) {
     int y_end = 0;
     if (page_ == Page::Picker) y_end = draw_picker(c, in, y0);
     else if (page_ == Page::PlanEdit) y_end = draw_plan_edit(c, in, y0);
+    else if (page_ == Page::TimeEdit) y_end = draw_time_edit(c, in, y0);
     else switch (tab_) {
         case Tab::Workout: y_end = draw_workout(c, in, y0); break;
         case Tab::Plan: y_end = draw_plan(c, in, y0); break;
-        case Tab::History: y_end = draw_history(c, y0); break;
+        case Tab::History: y_end = draw_history(c, in, y0); break;
         case Tab::Records: y_end = draw_records(c, y0); break;
     }
     const int content_h = y_end - y0 + 2 * m;
@@ -734,11 +744,7 @@ void App::frame(Canvas& canvas, const Input& in, Clock::time_point now) {
     now_ = now;
     today_ = weekday_index();
     if (rest_end_ && now_ >= *rest_end_) rest_end_.reset();
-    if (in.down) {
-        const auto id = static_cast<std::size_t>(page_ == Page::Main ? static_cast<int>(tab_)
-                                                                     : (page_ == Page::Picker ? 4 : 5));
-        scroll_[id] -= in.drag_dy;
-    }
+    if (in.down) scroll_[scroll_slot()] -= in.drag_dy;
 
     dirty_ = false;
     render(canvas, in);

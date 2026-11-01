@@ -6,6 +6,7 @@ An Android gym app written in C++23. It has no Java or Kotlin code and no third-
 - 195 exercises with photos (173 have them). Search by name, and filter by muscle and by equipment.
 - Workout plans, and a week schedule: choose a plan for each day. Today's plan shows on the Workout tab.
 - A joke exercise, **Smoking**: log how many cigarettes, before or after training, the brand, and pack or self rolled.
+- Change the time of any workout (EDIT in History, or on the running workout), so you can add exercises later.
 - See your workout history.
 - See your personal records (estimated 1 rep max).
 - Data stays on the phone, in the app's private folder.

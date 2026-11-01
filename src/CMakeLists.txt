@@ -6,6 +6,7 @@ add_library(gymcore STATIC
     ui/app.cpp
     ui/picker.cpp
     ui/plan.cpp
+    ui/session_time.cpp
     ui/canvas.cpp)
 target_include_directories(gymcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(gymcore PUBLIC cxx_std_23)

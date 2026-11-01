@@ -10,6 +10,7 @@
 #include "core/stats.hpp"
 #include "core/store.hpp"
 #include "ui/app.hpp"
+#include "ui/clock.hpp"
 
 namespace {
 
@@ -307,6 +308,69 @@ void test_smoking() {
     CHECK(app.log().empty() && !app.workout_active());
 }
 
+void test_time_edit() {
+    const std::int64_t now = epoch_now();
+    Data data;
+    data.log = {{now - 5 * 86400, {{0, 600, 5}}, {}}, {now - 3 * 86400, {{1, 800, 5}}, {}}, {now - 1000, {{2, 900, 3}}, {}}};
+    int saves = 0;
+    App app(std::move(data), [&](const Data&) { ++saves; }, 2.0f);
+    Canvas canvas;
+    canvas.resize(720, 2400);
+    const auto t0 = App::Clock::now();
+    app.frame(canvas, Input{}, t0);
+    CHECK(app.workout_active());   // the newest workout is under 6 hours old, so it is still running
+
+    // Move the running workout 4 days back: it lands between the two old ones.
+    app.edit_time(2);
+    CHECK(app.page() == Page::TimeEdit);
+    app.shift_session_days(2, -4);
+    CHECK(app.log()[1].sets[0].exercise == 2);        // now in the middle
+    CHECK(app.log()[0].sets[0].exercise == 0 && app.log()[2].sets[0].exercise == 1);
+    CHECK(app.workout_active());                      // it is still the running workout
+    app.log_set();                                    // so a new set goes to that workout
+    CHECK(app.log()[1].sets.size() == 2 && app.log()[2].sets.size() == 1);
+    CHECK(saves >= 2);
+
+    // The editor page follows the workout and draws.
+    app.frame(canvas, Input{}, t0);
+    CHECK(app.page() == Page::TimeEdit);
+
+    // The workout we are editing has a set of exercise 2. Find it again after every move, because moves reorder the list.
+    const auto where = [&] {
+        return static_cast<int>(std::ranges::find_if(app.log(), [](const Session& s) { return s.sets[0].exercise == 2; }) -
+                                app.log().begin());
+    };
+
+    // Minute steps and a calendar day step.
+    const auto before = app.log()[static_cast<std::size_t>(where())].start;
+    app.shift_session_minutes(where(), 90);
+    CHECK(app.log()[static_cast<std::size_t>(where())].start == before + 90 * 60);
+    app.shift_session_days(where(), 1);
+    CHECK(format_date(app.log()[static_cast<std::size_t>(where())].start).substr(0, 3) != format_date(before).substr(0, 3));  // another weekday
+
+    // Never in the future.
+    app.set_session_start(where(), now + 10 * 86400);
+    CHECK(app.log().back().start <= epoch_now());
+    CHECK(app.log().back().sets[0].exercise == 2);    // it moved to the end, as the newest
+
+    // Bad numbers do nothing.
+    app.edit_time(99);
+    app.shift_session_days(-1, 3);
+
+    // Back leaves the page. The History tab has an EDIT button that opens it.
+    CHECK(app.back() && app.page() == Page::Main);
+    app.set_tab(Tab::History);
+    bool opened = false;
+    for (int y = 150; y < 2300 && !opened; y += 8) {
+        App a(app.data(), nullptr, 2.0f);
+        a.set_tab(Tab::History);
+        a.frame(canvas, Input{}, t0);
+        a.frame(canvas, Input{.x = 640, .y = y, .press_x = 640, .press_y = y, .released = true}, t0);
+        opened = a.page() == Page::TimeEdit;
+    }
+    CHECK(opened);
+}
+
 void test_plans() {
     int saves = 0;
     App app({}, [&](const Data&) { ++saves; }, 2.0f);
@@ -369,6 +433,7 @@ int main() {
     test_store();
     test_plans();
     test_smoking();
+    test_time_edit();
     test_app();
     if (failures == 0) std::puts("all tests passed");
     return failures == 0 ? 0 : 1;

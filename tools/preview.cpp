@@ -64,6 +64,9 @@ int main(int argc, char** argv) {
     save("3_history");
     app.set_tab(Tab::Records);
     save("4_records");
+    app.edit_time(2);
+    save("10_edit_time");
+    app.back();
     app.select_exercise(kSmoking);
     app.set_smoke(2, "CAMEL", true, false);
     app.set_tab(Tab::Workout);

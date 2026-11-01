@@ -26,7 +26,7 @@ struct Input {
 };
 
 enum class Tab { Workout, Plan, History, Records };
-enum class Page { Main, Picker, PlanEdit };  // Picker and PlanEdit cover the whole screen
+enum class Page { Main, Picker, PlanEdit, TimeEdit };  // these cover the whole screen
 
 class App {
 public:
@@ -75,6 +75,12 @@ public:
     void assign_day(int day, int plan);  // day 0 = Monday. plan -1 = rest day.
     void add_plan_item(int plan, int exercise);
 
+    // Workout time: for adding exercises later. Workouts stay sorted by time.
+    void edit_time(int session);
+    void set_session_start(int session, std::int64_t start);   // never later than now
+    void shift_session_minutes(int session, int minutes);
+    void shift_session_days(int session, int days);        // calendar days, so daylight saving does not matter
+
     // Exercise search
     void open_picker(bool for_plan);
     void set_search(std::string text);
@@ -117,7 +123,7 @@ private:
     void render(Canvas& c, const Input& in);
     int draw_workout(Canvas& c, const Input& in, int y);
     int draw_smoking(Canvas& c, const Input& in, int y);
-    int draw_history(Canvas& c, int y);
+    int draw_history(Canvas& c, const Input& in, int y);
     int draw_records(Canvas& c, int y);
     void draw_header(Canvas& c, const Input& in);
     void draw_tabs(Canvas& c, const Input& in);
@@ -133,6 +139,9 @@ private:
     // plan.cpp
     int draw_plan(Canvas& c, const Input& in, int y);
     int draw_plan_edit(Canvas& c, const Input& in, int y);
+    // session_time.cpp
+    int draw_time_edit(Canvas& c, const Input& in, int y);
+    std::size_t scroll_slot() const noexcept;
     const Plan* today_plan() const;
     void pick_plan_item(const PlanItem& item);
 
@@ -150,12 +159,13 @@ private:
     std::optional<std::size_t> active_;  // index of the running session
     std::optional<Time> rest_end_;
     std::chrono::seconds rest_len_{90};
-    std::array<int, 6> scroll_{};        // one per Tab, then Picker, then PlanEdit
+    std::array<int, 7> scroll_{};        // one per Tab, then Picker, PlanEdit, TimeEdit
 
     // plans and search
     int today_ = 0;                      // Monday = 0
     int plan_day_ = 0;                   // day shown in the Plan tab
     int editing_ = -1;                   // plan open in the editor
+    int editing_session_ = -1;           // workout open in the time editor
     bool confirm_delete_ = false;
     bool pick_for_plan_ = false;
     int smoke_count_ = 1;
