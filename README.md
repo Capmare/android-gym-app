@@ -3,6 +3,8 @@
 An Android gym app written in C++23. It has no Java or Kotlin code and no third-party libraries.
 
 - Log sets (weight and reps) and get a 90 second rest timer.
+- 195 exercises. Search by name, and filter by muscle and by equipment.
+- Workout plans, and a week schedule: choose a plan for each day. Today's plan shows on the Workout tab.
 - See your workout history.
 - See your personal records (estimated 1 rep max).
 - Data stays on the phone, in the app's private folder.
@@ -20,6 +22,6 @@ Or use `cd android && gradle assembleDebug`. You need the Android SDK and NDK 27
 
 ## Layout
 
-- `src/core` - data, statistics, file storage
+- `src/core` - data, exercise list, statistics, file storage
 - `src/ui` - software renderer and screens
 - `src/android/main.cpp` - Android entry point

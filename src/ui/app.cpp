@@ -6,24 +6,17 @@
 #include <format>
 
 #include "core/stats.hpp"
+#include "ui/style.hpp"
 
 namespace gym {
 
-namespace {
+using namespace style;
 
-constexpr Color kBg = rgb(18, 18, 24);
-constexpr Color kCard = rgb(32, 33, 44);
-constexpr Color kText = rgb(238, 238, 245);
-constexpr Color kDim = rgb(150, 152, 170);
-constexpr Color kAccent = rgb(255, 107, 53);
-constexpr Color kGood = rgb(46, 204, 113);
-constexpr Color kBtn = rgb(52, 54, 72);
-constexpr Color kLine = rgb(48, 50, 66);
-constexpr Color kGoodBg = rgb(22, 52, 42);
+// ---- style helpers ----------------------------------------------------------
 
-enum class Icon { Dumbbell, List, Bars };
+namespace style {
 
-// Small vector-style icons made of rounded rects, drawn inside the square (x, y, s, s).
+// Small vector-style icons made of rounded rects.
 void draw_icon(Canvas& c, Icon icon, int x, int y, int s, Color col) {
     const int q = std::max(1, s / 6), t = std::max(1, s / 7);
     switch (icon) {
@@ -40,12 +33,16 @@ void draw_icon(Canvas& c, Icon icon, int x, int y, int s, Color col) {
             for (int i = 0; i < 3; ++i) c.fill_round({x + i * (s - w) / 2, y + s - heights[i], w, heights[i]}, w / 4, col);
             break;
         }
+        case Icon::Calendar: {
+            const int b = std::max(1, s / 10), top = s / 4;
+            c.fill_round({x, y + q / 2, s, s - q / 2}, q / 2, col);
+            c.fill({x + b, y + top, s - 2 * b, s - top - b}, kCard);
+            for (const int left : {x + s / 4, x + s - s / 4 - b * 2}) c.fill_round({left, y, b * 2, q}, b, col);
+            for (int i = 0; i < 3; ++i) c.fill({x + s / 5 + i * (s / 4), y + s / 2, b * 2, b * 2}, col);
+            break;
+        }
     }
 }
-
-constexpr std::array<std::string_view, 7> kDays{"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
-constexpr std::array<std::string_view, 12> kMonths{"JAN", "FEB", "MAR", "APR", "MAY", "JUN",
-                                                   "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
 
 Color lighten(Color c) {
     const auto up = [](Color v) { return std::min<Color>(255, v + 28); };
@@ -53,12 +50,27 @@ Color lighten(Color c) {
                static_cast<std::uint8_t>(up((c >> 16) & 0xFF)));
 }
 
+}  // namespace style
+
+namespace {
+
+constexpr std::array<std::string_view, 7> kDays{"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
+constexpr std::array<std::string_view, 12> kMonths{"JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+                                                   "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
+
 std::string format_date(std::int64_t epoch) {
     const std::time_t t = static_cast<std::time_t>(epoch);
     std::tm tm{};
     localtime_r(&t, &tm);
     return std::format("{} {:02} {} {}  {:02}:{:02}", kDays[tm.tm_wday % 7], tm.tm_mday, kMonths[tm.tm_mon % 12],
                        tm.tm_year + 1900, tm.tm_hour, tm.tm_min);
+}
+
+int weekday_index() {  // Monday = 0
+    const std::time_t t = std::time(nullptr);
+    std::tm tm{};
+    localtime_r(&t, &tm);
+    return (tm.tm_wday + 6) % 7;
 }
 
 std::int64_t epoch_now() {
@@ -72,11 +84,14 @@ std::string set_text(const SetEntry& e) {
 
 }  // namespace
 
-App::App(Log log, SaveFn save, float unit) : log_(std::move(log)), save_(std::move(save)), unit_(unit) {
+App::App(Data data, SaveFn save, float unit) : data_(std::move(data)), save_(std::move(save)), unit_(unit) {
     // A workout started in the last 6 hours is still running.
     constexpr std::int64_t kResumeWindow = 6 * 60 * 60;
-    if (!log_.empty() && epoch_now() - log_.back().start < kResumeWindow) active_ = log_.size() - 1;
+    if (!data_.log.empty() && epoch_now() - data_.log.back().start < kResumeWindow) active_ = data_.log.size() - 1;
+    today_ = plan_day_ = weekday_index();
     select_exercise(0);
+    // If there is a plan today, start with its first exercise.
+    if (const Plan* p = today_plan(); p && !p->items.empty()) pick_plan_item(p->items.front());
 }
 
 int App::u(float v) const {
@@ -89,7 +104,7 @@ void App::select_exercise(int index) {
     const int n = static_cast<int>(kExercises.size());
     exercise_ = ((index % n) + n) % n;
     // Start from what you did last time.
-    if (const auto last = last_set_for(log_, exercise_)) {
+    if (const auto last = last_set_for(data_.log, exercise_)) {
         weight_x10_ = last->weight_x10;
         reps_ = last->reps;
     } else {
@@ -97,6 +112,11 @@ void App::select_exercise(int index) {
         reps_ = 8;
     }
     dirty_ = true;
+}
+
+void App::pick_plan_item(const PlanItem& item) {
+    select_exercise(item.exercise);
+    reps_ = item.reps;
 }
 
 void App::set_weight_x10(int v) {
@@ -109,20 +129,20 @@ void App::set_reps(int v) {
 
 void App::log_set() {
     if (!active_) {
-        log_.push_back({epoch_now(), {}});
-        active_ = log_.size() - 1;
+        data_.log.push_back({epoch_now(), {}});
+        active_ = data_.log.size() - 1;
     }
-    log_[*active_].sets.push_back({exercise_, weight_x10_, reps_});
+    data_.log[*active_].sets.push_back({exercise_, weight_x10_, reps_});
     rest_end_ = now_ + rest_len_;
     persist();
 }
 
 void App::undo_set() {
     if (!active_) return;
-    auto& sets = log_[*active_].sets;
+    auto& sets = data_.log[*active_].sets;
     if (!sets.empty()) sets.pop_back();
     if (sets.empty()) {
-        log_.erase(log_.begin() + static_cast<std::ptrdiff_t>(*active_));
+        data_.log.erase(data_.log.begin() + static_cast<std::ptrdiff_t>(*active_));
         active_.reset();
     }
     persist();
@@ -134,9 +154,41 @@ void App::finish_workout() {
     dirty_ = true;
 }
 
+void App::set_tab(Tab t) noexcept {
+    tab_ = t;
+    page_ = Page::Main;
+    focus_ = Focus::None;
+    confirm_delete_ = false;
+}
+
+void App::set_insets(int top, int bottom) noexcept {
+    if (top != inset_top_ || bottom != inset_bottom_) dirty_ = true;
+    inset_top_ = std::max(0, top);
+    inset_bottom_ = std::max(0, bottom);
+}
+
+bool App::back() {
+    if (!can_go_back()) return false;
+    dirty_ = true;
+    if (focus_ != Focus::None) {
+        focus_ = Focus::None;
+        return true;
+    }
+    if (page_ == Page::Picker) {
+        page_ = pick_for_plan_ ? Page::PlanEdit : Page::Main;
+        return true;
+    }
+    if (page_ == Page::PlanEdit) {
+        page_ = Page::Main;
+        confirm_delete_ = false;
+        return true;
+    }
+    return false;
+}
+
 void App::persist() {
     dirty_ = true;
-    if (save_) save_(log_);
+    if (save_) save_(data_);
 }
 
 // ---- small drawing helpers --------------------------------------------------
@@ -145,13 +197,17 @@ bool App::tapped(const Input& in, Rect r) const {
     return in.released && !in.moved && r.contains(in.press_x, in.press_y) && r.contains(in.x, in.y);
 }
 
-bool App::button(Canvas& c, const Input& in, Rect r, std::string_view label, Color base, int scale) {
+// A tap on something that scrolls must not count if it started under the header or tab bar.
+bool App::tapped_in_view(const Input& in, Rect r) const {
+    return in.press_y >= view_top_ && in.press_y < view_bottom_ && tapped(in, r);
+}
+
+bool App::button(Canvas& c, const Input& in, Rect r, std::string_view label, Color base, int scale,
+                 bool in_content) {
     const bool pressed = in.down && !in.moved && r.contains(in.press_x, in.press_y) && r.contains(in.x, in.y);
     c.fill_round(r, u(8), pressed ? lighten(base) : base);
     centered(c, r, r.y + (r.h - Canvas::text_height(scale)) / 2, label, scale, kText);
-    // A button hidden under the header or tab bar must not react.
-    const bool visible = in.press_y >= view_top_ && in.press_y < view_bottom_;
-    if (visible && tapped(in, r)) {
+    if (in_content ? tapped_in_view(in, r) : tapped(in, r)) {
         dirty_ = true;
         return true;
     }
@@ -178,9 +234,52 @@ int App::stepper(Canvas& c, const Input& in, Rect card, std::string_view title, 
     int result = 0;
     for (int i = 0; i < 4; ++i) {
         const Rect b{card.x + u(8) + i * (bw + gap), card.bottom() - bh - u(8), bw, bh};
-        if (button(c, in, b, labels[i], kBtn, s_mid_)) result = deltas[i];
+        if (button(c, in, b, labels[static_cast<std::size_t>(i)], kBtn, s_mid_)) result = deltas[static_cast<std::size_t>(i)];
     }
     return result;
+}
+
+int App::chips(Canvas& c, const Input& in, int& y, std::span<const std::string_view> labels, int selected) {
+    const int m = u(16), right = c.width() - m, h = u(34), gap = u(8), pad = u(12);
+    int x = m, result = -1;
+    for (std::size_t i = 0; i < labels.size(); ++i) {
+        const int w = Canvas::text_width(labels[i], s_small_) + 2 * pad;
+        if (x + w > right && x > m) {
+            x = m;
+            y += h + gap;
+        }
+        const bool on = static_cast<int>(i) == selected;
+        if (button(c, in, {x, y, w, h}, labels[i], on ? kAccent : kBtn, s_small_)) result = static_cast<int>(i);
+        x += w + gap;
+    }
+    y += h + gap;
+    return result;
+}
+
+bool App::text_box(Canvas& c, const Input& in, Rect r, const std::string& text, std::string_view hint, bool focused) {
+    if (focused) c.fill_round(r, u(10), kAccent);
+    const int b = focused ? u(2) : 0;
+    c.fill_round({r.x + b, r.y + b, r.w - 2 * b, r.h - 2 * b}, u(10) - b, focused ? kBg : kCard);
+    const int ty = r.y + (r.h - Canvas::text_height(s_mid_)) / 2;
+    if (text.empty() && !focused) c.text(r.x + u(14), ty, hint, s_mid_, kDim);
+    else c.text(r.x + u(14), ty, focused ? text + "_" : text, s_mid_, kText);
+    if (tapped_in_view(in, r)) {
+        dirty_ = true;
+        return true;
+    }
+    return false;
+}
+
+int App::empty_state(Canvas& c, int y, int icon, std::string_view title, std::string_view hint) {
+    const int m = u(16), isz = u(36);
+    const Rect card{m, y, c.width() - 2 * m, u(40) + isz + u(14) + Canvas::text_height(s_mid_) + u(8) +
+                                                 Canvas::text_height(s_small_)};
+    c.fill_round(card, u(12), kCard);
+    draw_icon(c, static_cast<Icon>(icon), card.x + (card.w - isz) / 2, card.y + u(20), isz, kBtn);
+    const int ty = card.y + u(20) + isz + u(14);
+    centered(c, card, ty, title, s_mid_, kDim);
+    centered(c, card, ty + Canvas::text_height(s_mid_) + u(8), hint, s_small_, kDim);
+    return card.bottom();
 }
 
 // ---- screens ----------------------------------------------------------------
@@ -191,10 +290,10 @@ int App::draw_workout(Canvas& c, const Input& in, int y) {
     // Summary of the running workout
     {
         const bool on = active_.has_value();
-        const auto sums = on ? summarize(log_[*active_]) : std::vector<ExerciseSummary>{};
+        const auto sums = on ? summarize(data_.log[*active_]) : std::vector<ExerciseSummary>{};
         const std::array<std::pair<std::string_view, std::string>, 3> tiles{{
-            {"SETS", on ? std::format("{}", log_[*active_].sets.size()) : "0"},
-            {"VOLUME", std::format("{} KG", on ? volume_x10(log_[*active_]) / 10 : 0)},
+            {"SETS", on ? std::format("{}", data_.log[*active_].sets.size()) : "0"},
+            {"VOLUME", std::format("{} KG", on ? volume_x10(data_.log[*active_]) / 10 : 0)},
             {"LIFTS", std::format("{}", sums.size())},
         }};
         const int gap = u(8), tw = (cw - 2 * gap) / 3, th = u(60);
@@ -203,15 +302,44 @@ int App::draw_workout(Canvas& c, const Input& in, int y) {
             c.fill_round(r, u(12), kCard);
             const int block = Canvas::text_height(s_mid_) + u(6) + Canvas::text_height(s_small_);
             const int ty = r.y + (r.h - block) / 2;
-            centered(c, r, ty, tiles[static_cast<std::size_t>(i)].second, s_mid_, on ? kText : kDim);
-            centered(c, r, ty + Canvas::text_height(s_mid_) + u(6), tiles[static_cast<std::size_t>(i)].first, s_small_, kDim);
+            const auto& tile = tiles[static_cast<std::size_t>(i)];
+            centered(c, r, ty, tile.second, s_mid_, on ? kText : kDim);
+            centered(c, r, ty + Canvas::text_height(s_mid_) + u(6), tile.first, s_small_, kDim);
         }
         y += th + u(12);
     }
 
-    // Exercise picker
+    // Today's plan: tap a line to pick that exercise.
+    if (const Plan* plan = today_plan(); plan && !plan->items.empty()) {
+        c.text(m, y, std::format("TODAY: {}", plan->name), s_small_, kDim);
+        y += Canvas::text_height(s_small_) + u(8);
+        const int row_h = u(40);
+        const Rect card{m, y, cw, static_cast<int>(plan->items.size()) * row_h + u(12)};
+        c.fill_round(card, u(12), kCard);
+        int ry = card.y + u(6);
+        for (const auto& item : plan->items) {
+            const Rect row{card.x + u(6), ry, card.w - u(12), row_h};
+            const int done = active_ ? static_cast<int>(std::ranges::count(data_.log[*active_].sets, item.exercise,
+                                                                           &SetEntry::exercise))
+                                     : 0;
+            if (item.exercise == exercise_) c.fill_round(row, u(8), kLine);
+            const int ty = row.y + (row.h - Canvas::text_height(s_mid_)) / 2;
+            c.text(row.x + u(8), ty, kExercises[static_cast<std::size_t>(item.exercise)].name, s_mid_,
+                   done >= item.sets ? kGood : kText);
+            right_aligned(c, row.right() - u(8), ty, std::format("{}/{} X {}", done, item.sets, item.reps), s_mid_,
+                          done >= item.sets ? kGood : kDim);
+            if (tapped_in_view(in, row)) {
+                pick_plan_item(item);
+                dirty_ = true;
+            }
+            ry += row_h;
+        }
+        y = card.bottom() + u(12);
+    }
+
+    // Exercise picker: arrows step through the list, the middle opens the search.
     {
-        const Rect card{m, y, cw, u(84)};
+        const Rect card{m, y, cw, u(96)};
         c.fill_round(card, u(12), kCard);
         const int bs = u(48);
         const int by = card.y + (card.h - bs) / 2;
@@ -220,8 +348,11 @@ int App::draw_workout(Canvas& c, const Input& in, int y) {
             select_exercise(exercise_ + 1);
         const Rect mid{card.x + bs + u(16), card.y, card.w - 2 * bs - u(32), card.h};
         const auto& ex = kExercises[static_cast<std::size_t>(exercise_)];
-        centered(c, mid, card.y + u(20), ex.name, s_mid_, kText);
-        centered(c, mid, card.y + u(20) + Canvas::text_height(s_mid_) + u(8), ex.muscle, s_small_, kDim);
+        centered(c, mid, card.y + u(14), ex.name, s_mid_, kText);
+        centered(c, mid, card.y + u(14) + Canvas::text_height(s_mid_) + u(8),
+                 std::format("{} - {}", name(ex.muscle), name(ex.equipment)), s_small_, kDim);
+        centered(c, mid, card.bottom() - u(14) - Canvas::text_height(s_small_), "TAP HERE TO SEARCH", s_small_, kAccent);
+        if (tapped_in_view(in, mid)) open_picker(false);
         y = card.bottom() + u(12);
     }
 
@@ -252,12 +383,13 @@ int App::draw_workout(Canvas& c, const Input& in, int y) {
         c.fill_round({card.x + u(2), card.y + u(2), card.w - u(4), card.h - u(4)}, u(10), kGoodBg);
         const auto left = std::chrono::ceil<std::chrono::seconds>(*rest_end_ - now_).count();
         c.text(card.x + u(16), card.y + u(14), "REST", s_small_, kDim);
-        c.text(card.x + u(16), card.y + u(18) + Canvas::text_height(s_small_), std::format("{:02}:{:02}", left / 60, left % 60),
-               s_big_, kGood);
+        c.text(card.x + u(16), card.y + u(18) + Canvas::text_height(s_small_),
+               std::format("{:02}:{:02}", left / 60, left % 60), s_big_, kGood);
         const Rect bar{card.x + u(16), card.bottom() - u(20), card.w - u(32), u(6)};
         c.fill_round(bar, u(3), kBtn);
         const double frac = double(left) / double(rest_len_.count());
-        c.fill_round({bar.x, bar.y, std::max(u(6), static_cast<int>(bar.w * std::clamp(frac, 0.0, 1.0))), bar.h}, u(3), kGood);
+        c.fill_round({bar.x, bar.y, std::max(u(6), static_cast<int>(bar.w * std::clamp(frac, 0.0, 1.0))), bar.h}, u(3),
+                     kGood);
         if (button(c, in, {card.right() - u(104), card.y + u(12), u(88), u(34)}, "SKIP", kBtn, s_small_))
             rest_end_.reset();
         y = card.bottom() + u(12);
@@ -275,8 +407,8 @@ int App::draw_workout(Canvas& c, const Input& in, int y) {
     // Sets of the running workout, newest first
     c.text(m, y, "THIS WORKOUT", s_small_, kDim);
     y += Canvas::text_height(s_small_) + u(8);
-    if (!active_) return empty_state(c, y, int(Icon::Dumbbell), "NO SETS YET", "LOG YOUR FIRST SET");
-    const auto& sets = log_[*active_].sets;
+    if (!active_) return empty_state(c, y, static_cast<int>(Icon::Dumbbell), "NO SETS YET", "LOG YOUR FIRST SET");
+    const auto& sets = data_.log[*active_].sets;
     const int row_h = u(30);
     const Rect card{m, y, cw, static_cast<int>(sets.size()) * row_h + u(16)};
     c.fill_round(card, u(12), kCard);
@@ -294,10 +426,9 @@ int App::draw_workout(Canvas& c, const Input& in, int y) {
 
 int App::draw_history(Canvas& c, int y) {
     const int m = u(16), cw = c.width() - 2 * m;
-    if (log_.empty()) {
-        return empty_state(c, y, int(Icon::List), "NO WORKOUTS YET", "FINISHED WORKOUTS SHOW UP HERE");
-    }
-    for (auto s = log_.rbegin(); s != log_.rend(); ++s) {
+    if (data_.log.empty())
+        return empty_state(c, y, static_cast<int>(Icon::List), "NO WORKOUTS YET", "FINISHED WORKOUTS SHOW UP HERE");
+    for (auto s = data_.log.rbegin(); s != data_.log.rend(); ++s) {
         const auto sums = summarize(*s);
         const int head = u(12) + Canvas::text_height(s_mid_) + u(6) + Canvas::text_height(s_small_) + u(10);
         const int row_h = u(28);
@@ -320,10 +451,9 @@ int App::draw_history(Canvas& c, int y) {
 
 int App::draw_records(Canvas& c, int y) {
     const int m = u(16), cw = c.width() - 2 * m;
-    const auto bests = personal_bests(log_);
-    if (bests.empty()) {
-        return empty_state(c, y, int(Icon::Bars), "NO RECORDS YET", "LOG SOME SETS TO SET A RECORD");
-    }
+    const auto bests = personal_bests(data_.log);
+    if (bests.empty())
+        return empty_state(c, y, static_cast<int>(Icon::Bars), "NO RECORDS YET", "LOG SOME SETS TO SET A RECORD");
     c.text(m, y, "ESTIMATED 1 REP MAX", s_small_, kDim);
     y += Canvas::text_height(s_small_) + u(10);
     for (const auto& b : bests) {
@@ -340,33 +470,29 @@ int App::draw_records(Canvas& c, int y) {
     return y;
 }
 
-int App::empty_state(Canvas& c, int y, int icon, std::string_view title, std::string_view hint) {
-    const int m = u(16), isz = u(36);
-    const Rect card{m, y, c.width() - 2 * m, u(40) + isz + u(14) + Canvas::text_height(s_mid_) + u(8) +
-                                                 Canvas::text_height(s_small_)};
-    c.fill_round(card, u(12), kCard);
-    draw_icon(c, static_cast<Icon>(icon), card.x + (card.w - isz) / 2, card.y + u(20), isz, kBtn);
-    const int ty = card.y + u(20) + isz + u(14);
-    centered(c, card, ty, title, s_mid_, kDim);
-    centered(c, card, ty + Canvas::text_height(s_mid_) + u(8), hint, s_small_, kDim);
-    return card.bottom();
-}
-
-void App::draw_header(Canvas& c) {
+void App::draw_header(Canvas& c, const Input& in) {
     const int hh = view_top_;
+    const int bar = u(56);  // the header area below the status bar
     c.fill({0, 0, c.width(), hh}, kCard);
     c.fill({0, hh - 1, c.width(), 1}, kLine);
-    const int isz = u(26), ty = (hh - Canvas::text_height(s_mid_)) / 2;
-    draw_icon(c, Icon::Dumbbell, u(16), (hh - isz) / 2, isz, kAccent);
-    c.text(u(16) + isz + u(10), ty, "GYM LOG", s_mid_, kText);
-    if (active_) {
-        const std::string_view label = "ACTIVE";
-        const int th = Canvas::text_height(s_small_), dot = u(8), pad = u(10);
-        const Rect pill{c.width() - u(16) - (2 * pad + dot + u(8) + Canvas::text_width(label, s_small_)),
-                        (hh - th - 2 * u(6)) / 2, 2 * pad + dot + u(8) + Canvas::text_width(label, s_small_), th + 2 * u(6)};
-        c.fill_round(pill, pill.h / 2, kGoodBg);
-        c.fill_round({pill.x + pad, pill.y + (pill.h - dot) / 2, dot, dot}, dot / 2, kGood);
-        c.text(pill.x + pad + dot + u(8), pill.y + u(6), label, s_small_, kGood);
+    const int top = inset_top_;
+    if (page_ == Page::Main) {
+        const int isz = u(26);
+        draw_icon(c, Icon::Dumbbell, u(16), top + (bar - isz) / 2, isz, kAccent);
+        c.text(u(16) + isz + u(10), top + (bar - Canvas::text_height(s_mid_)) / 2, "GYM LOG", s_mid_, kText);
+        if (active_) {
+            const std::string_view label = "ACTIVE";
+            const int th = Canvas::text_height(s_small_), dot = u(8), pad = u(10);
+            const int w = 2 * pad + dot + u(8) + Canvas::text_width(label, s_small_);
+            const Rect pill{c.width() - u(16) - w, top + (bar - th - 2 * u(6)) / 2, w, th + 2 * u(6)};
+            c.fill_round(pill, pill.h / 2, kGoodBg);
+            c.fill_round({pill.x + pad, pill.y + (pill.h - dot) / 2, dot, dot}, dot / 2, kGood);
+            c.text(pill.x + pad + dot + u(8), pill.y + u(6), label, s_small_, kGood);
+        }
+    } else {
+        if (button(c, in, {u(8), top + u(8), u(40), u(40)}, "<", kBtn, s_mid_, false)) back();
+        c.text(u(60), top + (bar - Canvas::text_height(s_mid_)) / 2,
+               page_ == Page::Picker ? "CHOOSE EXERCISE" : "EDIT PLAN", s_mid_, kText);
     }
 }
 
@@ -374,19 +500,19 @@ void App::draw_tabs(Canvas& c, const Input& in) {
     const int h = c.height() - view_bottom_;
     c.fill({0, view_bottom_, c.width(), h}, kCard);
     c.fill({0, view_bottom_, c.width(), 1}, kLine);
-    constexpr std::array<std::string_view, 3> names{"WORKOUT", "HISTORY", "RECORDS"};
-    constexpr std::array<Icon, 3> icons{Icon::Dumbbell, Icon::List, Icon::Bars};
-    const int w = c.width() / 3, isz = u(18), gap = u(6);
-    for (int i = 0; i < 3; ++i) {
+    constexpr std::array<std::string_view, 4> names{"WORKOUT", "PLAN", "HISTORY", "RECORDS"};
+    constexpr std::array<Icon, 4> icons{Icon::Dumbbell, Icon::Calendar, Icon::List, Icon::Bars};
+    const int w = c.width() / 4, isz = u(18), gap = u(6), bar = u(64);
+    for (int i = 0; i < 4; ++i) {
         const auto k = static_cast<std::size_t>(i);
         const Rect r{i * w, view_bottom_, w, h};
         const bool selected = static_cast<int>(tab_) == i;
-        const int top = r.y + (r.h - isz - gap - Canvas::text_height(s_small_)) / 2;
+        const int top = r.y + (bar - isz - gap - Canvas::text_height(s_small_)) / 2;
         if (selected) c.fill_round({r.x + (r.w - u(40)) / 2, r.y, u(40), u(3)}, u(1), kAccent);
         draw_icon(c, icons[k], r.x + (r.w - isz) / 2, top, isz, selected ? kAccent : kDim);
         centered(c, r, top + isz + gap, names[k], s_small_, selected ? kText : kDim);
         if (tapped(in, r)) {
-            tab_ = static_cast<Tab>(i);
+            set_tab(static_cast<Tab>(i));
             dirty_ = true;
         }
     }
@@ -398,19 +524,26 @@ void App::render(Canvas& c, const Input& in) {
     s_small_ = std::max(1, u(1.2f));
     s_mid_ = std::max(2, u(1.6f));
     s_big_ = std::max(3, u(2.6f));
-    view_top_ = u(56);
-    view_bottom_ = c.height() - u(64);
+
+    const bool main = page_ == Page::Main;
+    const int keyboard = focus_ != Focus::None ? keyboard_height() : 0;
+    view_top_ = inset_top_ + u(56);
+    view_bottom_ = main ? c.height() - inset_bottom_ - u(64) : c.height() - inset_bottom_ - keyboard;
 
     c.clear(kBg);
 
     // Content first. The header and tab bar are painted on top, so
     // scrolled content that goes under them is hidden.
     const int m = u(16);
-    auto& scroll = scroll_[static_cast<std::size_t>(tab_)];
+    const auto id = static_cast<std::size_t>(main ? static_cast<int>(tab_) : (page_ == Page::Picker ? 4 : 5));
+    auto& scroll = scroll_[id];
     const int y0 = view_top_ + m - scroll;
     int y_end = 0;
-    switch (tab_) {
+    if (page_ == Page::Picker) y_end = draw_picker(c, in, y0);
+    else if (page_ == Page::PlanEdit) y_end = draw_plan_edit(c, in, y0);
+    else switch (tab_) {
         case Tab::Workout: y_end = draw_workout(c, in, y0); break;
+        case Tab::Plan: y_end = draw_plan(c, in, y0); break;
         case Tab::History: y_end = draw_history(c, y0); break;
         case Tab::Records: y_end = draw_records(c, y0); break;
     }
@@ -421,14 +554,22 @@ void App::render(Canvas& c, const Input& in) {
         dirty_ = true;
     }
 
-    draw_header(c);
-    draw_tabs(c, in);
+    // Cover whatever content ran below the visible area.
+    c.fill({0, view_bottom_, c.width(), c.height() - view_bottom_}, kBg);
+    draw_header(c, in);
+    if (main) draw_tabs(c, in);
+    else if (keyboard > 0) draw_keyboard(c, in);
 }
 
 void App::frame(Canvas& canvas, const Input& in, Clock::time_point now) {
     now_ = now;
+    today_ = weekday_index();
     if (rest_end_ && now_ >= *rest_end_) rest_end_.reset();
-    if (in.down) scroll_[static_cast<std::size_t>(tab_)] -= in.drag_dy;
+    if (in.down) {
+        const auto id = static_cast<std::size_t>(page_ == Page::Main ? static_cast<int>(tab_)
+                                                                     : (page_ == Page::Picker ? 4 : 5));
+        scroll_[id] -= in.drag_dy;
+    }
 
     dirty_ = false;
     render(canvas, in);

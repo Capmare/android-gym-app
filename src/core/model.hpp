@@ -2,35 +2,15 @@
 
 #include <array>
 #include <cstdint>
-#include <string_view>
+#include <string>
 #include <vector>
 
 namespace gym {
 
-struct Exercise {
-    std::string_view name;
-    std::string_view muscle;
-};
-
-inline constexpr auto kExercises = std::to_array<Exercise>({
-    {"Bench Press", "Chest"},
-    {"Squat", "Legs"},
-    {"Deadlift", "Back"},
-    {"Overhead Press", "Shoulders"},
-    {"Barbell Row", "Back"},
-    {"Pull-up", "Back"},
-    {"Dip", "Chest"},
-    {"Barbell Curl", "Arms"},
-    {"Triceps Pushdown", "Arms"},
-    {"Leg Press", "Legs"},
-    {"Romanian Deadlift", "Legs"},
-    {"Lateral Raise", "Shoulders"},
-});
-
 // Weights are stored in tenths of a kilogram (600 = 60.0 kg).
 // Integers avoid rounding errors and floating point formatting.
 struct SetEntry {
-    int exercise{};   // index into kExercises
+    int exercise{};   // index into kExercises (core/exercises.hpp)
     int weight_x10{};
     int reps{};
     friend bool operator==(const SetEntry&, const SetEntry&) = default;
@@ -42,5 +22,26 @@ struct Session {
 };
 
 using Log = std::vector<Session>;
+
+// One line of a workout plan: "Bench Press, 4 sets of 8".
+struct PlanItem {
+    int exercise{};
+    int sets{3};
+    int reps{10};
+    friend bool operator==(const PlanItem&, const PlanItem&) = default;
+};
+
+struct Plan {
+    std::string name;
+    std::vector<PlanItem> items;
+    friend bool operator==(const Plan&, const Plan&) = default;
+};
+
+// Everything the app saves.
+struct Data {
+    Log log;
+    std::vector<Plan> plans;
+    std::array<int, 7> week{-1, -1, -1, -1, -1, -1, -1};  // plan index per weekday, Monday first. -1 = rest day.
+};
 
 }  // namespace gym

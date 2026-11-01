@@ -7,6 +7,8 @@
 #include <system_error>
 #include <vector>
 
+#include "core/exercises.hpp"
+
 namespace gym {
 
 namespace {
@@ -31,28 +33,32 @@ bool to_int(std::string_view s, T& out) {
 
 }  // namespace
 
-std::string serialize(const Log& log) {
+std::string serialize(const Data& data) {
     std::string out = "gym 1\n";
-    for (const auto& session : log) {
+    for (const auto& session : data.log) {
         out += std::format("session {}\n", session.start);
-        for (const auto& e : session.sets)
-            out += std::format("set {} {} {}\n", e.exercise, e.weight_x10, e.reps);
+        for (const auto& e : session.sets) out += std::format("set {} {} {}\n", e.exercise, e.weight_x10, e.reps);
     }
+    for (const auto& plan : data.plans) {
+        out += std::format("plan {}\n", plan.name);
+        for (const auto& i : plan.items) out += std::format("item {} {} {}\n", i.exercise, i.sets, i.reps);
+    }
+    for (std::size_t d = 0; d < data.week.size(); ++d)
+        if (data.week[d] >= 0) out += std::format("day {} {}\n", d, data.week[d]);
     return out;
 }
 
-std::expected<Log, std::string> parse(std::string_view text) {
-    Log log;
+std::expected<Data, std::string> parse(std::string_view text) {
+    Data data;
     bool header = false;
     int line_no = 0;
+    const int exercise_count = static_cast<int>(kExercises.size());
     for (auto line : split(text, '\n')) {
         ++line_no;
         if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
         if (line.empty()) continue;
 
-        const auto fail = [&](std::string_view why) {
-            return std::unexpected(std::format("line {}: {}", line_no, why));
-        };
+        const auto fail = [&](std::string_view why) { return std::unexpected(std::format("line {}: {}", line_no, why)); };
         const auto words = split(line, ' ');
 
         if (!header) {
@@ -61,31 +67,48 @@ std::expected<Log, std::string> parse(std::string_view text) {
         } else if (words[0] == "session" && words.size() == 2) {
             Session s;
             if (!to_int(words[1], s.start)) return fail("bad time");
-            log.push_back(std::move(s));
+            data.log.push_back(std::move(s));
         } else if (words[0] == "set" && words.size() == 4) {
             SetEntry e;
-            if (log.empty()) return fail("set before session");
+            if (data.log.empty()) return fail("set before session");
             if (!to_int(words[1], e.exercise) || !to_int(words[2], e.weight_x10) || !to_int(words[3], e.reps))
                 return fail("bad number");
-            if (e.exercise < 0 || e.exercise >= static_cast<int>(kExercises.size())) return fail("unknown exercise");
+            if (e.exercise < 0 || e.exercise >= exercise_count) return fail("unknown exercise");
             if (e.weight_x10 < 0 || e.reps < 1) return fail("bad value");
-            log.back().sets.push_back(e);
+            data.log.back().sets.push_back(e);
+        } else if (line.starts_with("plan ")) {
+            data.plans.push_back({std::string(line.substr(5)), {}});
+        } else if (words[0] == "item" && words.size() == 4) {
+            PlanItem i;
+            if (data.plans.empty()) return fail("item before plan");
+            if (!to_int(words[1], i.exercise) || !to_int(words[2], i.sets) || !to_int(words[3], i.reps))
+                return fail("bad number");
+            if (i.exercise < 0 || i.exercise >= exercise_count) return fail("unknown exercise");
+            if (i.sets < 1 || i.sets > 99 || i.reps < 1 || i.reps > 99) return fail("bad value");
+            data.plans.back().items.push_back(i);
+        } else if (words[0] == "day" && words.size() == 3) {
+            int d = 0, p = 0;
+            if (!to_int(words[1], d) || !to_int(words[2], p)) return fail("bad number");
+            if (d < 0 || d > 6 || p < 0) return fail("bad value");
+            data.week[static_cast<std::size_t>(d)] = p;
         } else {
             return fail("unknown line");
         }
     }
     if (!header) return std::unexpected("empty file");
-    return log;
+    for (const int p : data.week)
+        if (p >= static_cast<int>(data.plans.size())) return std::unexpected("day uses a missing plan");
+    return data;
 }
 
-bool save_file(const std::filesystem::path& path, const Log& log) {
+bool save_file(const std::filesystem::path& path, const Data& data) {
     // Write to a temporary file first. A crash cannot damage the old file.
     auto tmp = path;
     tmp += ".tmp";
     {
         std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
         if (!f) return false;
-        f << serialize(log);
+        f << serialize(data);
         if (!f) return false;
     }
     std::error_code ec;
@@ -93,13 +116,13 @@ bool save_file(const std::filesystem::path& path, const Log& log) {
     return !ec;
 }
 
-Log load_file(const std::filesystem::path& path) {
+Data load_file(const std::filesystem::path& path) {
     std::ifstream f(path, std::ios::binary);
     if (!f) return {};
     std::stringstream ss;
     ss << f.rdbuf();
-    auto log = parse(ss.str());
-    return log ? std::move(*log) : Log{};
+    auto data = parse(ss.str());
+    return data ? std::move(*data) : Data{};
 }
 
 }  // namespace gym
