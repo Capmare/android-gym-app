@@ -70,6 +70,7 @@ private:
     int draw_workout(Canvas& c, const Input& in, int y);
     int draw_history(Canvas& c, int y);
     int draw_records(Canvas& c, int y);
+    int empty_state(Canvas& c, int y, int icon, std::string_view title, std::string_view hint);
     void draw_header(Canvas& c);
     void draw_tabs(Canvas& c, const Input& in);
 

@@ -18,6 +18,30 @@ constexpr Color kDim = rgb(150, 152, 170);
 constexpr Color kAccent = rgb(255, 107, 53);
 constexpr Color kGood = rgb(46, 204, 113);
 constexpr Color kBtn = rgb(52, 54, 72);
+constexpr Color kLine = rgb(48, 50, 66);
+constexpr Color kGoodBg = rgb(22, 52, 42);
+
+enum class Icon { Dumbbell, List, Bars };
+
+// Small vector-style icons made of rounded rects, drawn inside the square (x, y, s, s).
+void draw_icon(Canvas& c, Icon icon, int x, int y, int s, Color col) {
+    const int q = std::max(1, s / 6), t = std::max(1, s / 7);
+    switch (icon) {
+        case Icon::Dumbbell:
+            c.fill({x, y + (s - t) / 2, s, t}, col);
+            for (const int left : {x, x + s - q}) c.fill_round({left, y + s / 4, q, s / 2}, q / 3, col);
+            for (const int left : {x + q, x + s - 2 * q}) c.fill_round({left, y, q, s}, q / 3, col);
+            break;
+        case Icon::List:
+            for (int i = 0; i < 3; ++i) c.fill_round({x, y + i * (s - t) / 2, s, t}, t / 2, col);
+            break;
+        case Icon::Bars: {
+            const int w = s / 4, heights[3] = {s / 2, s, s * 3 / 4};
+            for (int i = 0; i < 3; ++i) c.fill_round({x + i * (s - w) / 2, y + s - heights[i], w, heights[i]}, w / 4, col);
+            break;
+        }
+    }
+}
 
 constexpr std::array<std::string_view, 7> kDays{"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
 constexpr std::array<std::string_view, 12> kMonths{"JAN", "FEB", "MAR", "APR", "MAY", "JUN",
@@ -145,7 +169,8 @@ void App::right_aligned(Canvas& c, int right, int y, std::string_view s, int sca
 int App::stepper(Canvas& c, const Input& in, Rect card, std::string_view title, const std::string& value,
                  const std::array<std::string_view, 4>& labels, const std::array<int, 4>& deltas) {
     c.fill_round(card, u(12), kCard);
-    c.text(card.x + u(14), card.y + u(12), title, s_small_, kDim);
+    c.fill_round({card.x + u(14), card.y + u(14), u(3), Canvas::text_height(s_small_)}, 1, kAccent);
+    c.text(card.x + u(24), card.y + u(14), title, s_small_, kDim);
     centered(c, card, card.y + u(30), value, s_big_, kText);
 
     const int gap = u(8), bh = u(40);
@@ -162,6 +187,27 @@ int App::stepper(Canvas& c, const Input& in, Rect card, std::string_view title, 
 
 int App::draw_workout(Canvas& c, const Input& in, int y) {
     const int m = u(16), cw = c.width() - 2 * m;
+
+    // Summary of the running workout
+    {
+        const bool on = active_.has_value();
+        const auto sums = on ? summarize(log_[*active_]) : std::vector<ExerciseSummary>{};
+        const std::array<std::pair<std::string_view, std::string>, 3> tiles{{
+            {"SETS", on ? std::format("{}", log_[*active_].sets.size()) : "0"},
+            {"VOLUME", std::format("{} KG", on ? volume_x10(log_[*active_]) / 10 : 0)},
+            {"LIFTS", std::format("{}", sums.size())},
+        }};
+        const int gap = u(8), tw = (cw - 2 * gap) / 3, th = u(60);
+        for (int i = 0; i < 3; ++i) {
+            const Rect r{m + i * (tw + gap), y, tw, th};
+            c.fill_round(r, u(12), kCard);
+            const int block = Canvas::text_height(s_mid_) + u(6) + Canvas::text_height(s_small_);
+            const int ty = r.y + (r.h - block) / 2;
+            centered(c, r, ty, tiles[static_cast<std::size_t>(i)].second, s_mid_, on ? kText : kDim);
+            centered(c, r, ty + Canvas::text_height(s_mid_) + u(6), tiles[static_cast<std::size_t>(i)].first, s_small_, kDim);
+        }
+        y += th + u(12);
+    }
 
     // Exercise picker
     {
@@ -198,17 +244,21 @@ int App::draw_workout(Canvas& c, const Input& in, int y) {
     if (button(c, in, {m, y, cw, u(64)}, "LOG SET", kAccent, s_mid_)) log_set();
     y += u(64) + u(12);
 
-    // Rest timer
+    // Rest timer: green outline and tinted fill so it stands out
     if (rest_end_ && now_ < *rest_end_) {
-        const Rect card{m, y, cw, u(60)};
-        c.fill_round(card, u(12), kCard);
+        const int th = Canvas::text_height(s_big_);
+        const Rect card{m, y, cw, u(14) + Canvas::text_height(s_small_) + u(4) + th + u(12) + u(6) + u(14)};
+        c.fill_round(card, u(12), kGood);
+        c.fill_round({card.x + u(2), card.y + u(2), card.w - u(4), card.h - u(4)}, u(10), kGoodBg);
         const auto left = std::chrono::ceil<std::chrono::seconds>(*rest_end_ - now_).count();
-        c.text(card.x + u(14), card.y + u(12), std::format("REST {:02}:{:02}", left / 60, left % 60), s_mid_, kGood);
-        const Rect bar{card.x + u(14), card.bottom() - u(14), card.w - u(28), u(4)};
-        c.fill(bar, kBtn);
+        c.text(card.x + u(16), card.y + u(14), "REST", s_small_, kDim);
+        c.text(card.x + u(16), card.y + u(18) + Canvas::text_height(s_small_), std::format("{:02}:{:02}", left / 60, left % 60),
+               s_big_, kGood);
+        const Rect bar{card.x + u(16), card.bottom() - u(20), card.w - u(32), u(6)};
+        c.fill_round(bar, u(3), kBtn);
         const double frac = double(left) / double(rest_len_.count());
-        c.fill({bar.x, bar.y, static_cast<int>(bar.w * std::clamp(frac, 0.0, 1.0)), bar.h}, kGood);
-        if (button(c, in, {card.right() - u(88), card.y + u(10), u(76), u(32)}, "SKIP", kBtn, s_small_))
+        c.fill_round({bar.x, bar.y, std::max(u(6), static_cast<int>(bar.w * std::clamp(frac, 0.0, 1.0))), bar.h}, u(3), kGood);
+        if (button(c, in, {card.right() - u(104), card.y + u(12), u(88), u(34)}, "SKIP", kBtn, s_small_))
             rest_end_.reset();
         y = card.bottom() + u(12);
     }
@@ -225,10 +275,7 @@ int App::draw_workout(Canvas& c, const Input& in, int y) {
     // Sets of the running workout, newest first
     c.text(m, y, "THIS WORKOUT", s_small_, kDim);
     y += Canvas::text_height(s_small_) + u(8);
-    if (!active_) {
-        c.text(m, y, "NO SETS YET. LOG YOUR FIRST SET!", s_small_, kDim);
-        return y + Canvas::text_height(s_small_);
-    }
+    if (!active_) return empty_state(c, y, int(Icon::Dumbbell), "NO SETS YET", "LOG YOUR FIRST SET");
     const auto& sets = log_[*active_].sets;
     const int row_h = u(30);
     const Rect card{m, y, cw, static_cast<int>(sets.size()) * row_h + u(16)};
@@ -248,8 +295,7 @@ int App::draw_workout(Canvas& c, const Input& in, int y) {
 int App::draw_history(Canvas& c, int y) {
     const int m = u(16), cw = c.width() - 2 * m;
     if (log_.empty()) {
-        centered(c, {0, 0, c.width(), 0}, y + u(40), "NO WORKOUTS YET", s_mid_, kDim);
-        return y + u(80);
+        return empty_state(c, y, int(Icon::List), "NO WORKOUTS YET", "FINISHED WORKOUTS SHOW UP HERE");
     }
     for (auto s = log_.rbegin(); s != log_.rend(); ++s) {
         const auto sums = summarize(*s);
@@ -276,17 +322,17 @@ int App::draw_records(Canvas& c, int y) {
     const int m = u(16), cw = c.width() - 2 * m;
     const auto bests = personal_bests(log_);
     if (bests.empty()) {
-        centered(c, {0, 0, c.width(), 0}, y + u(40), "NO RECORDS YET", s_mid_, kDim);
-        return y + u(80);
+        return empty_state(c, y, int(Icon::Bars), "NO RECORDS YET", "LOG SOME SETS TO SET A RECORD");
     }
     c.text(m, y, "ESTIMATED 1 REP MAX", s_small_, kDim);
     y += Canvas::text_height(s_small_) + u(10);
     for (const auto& b : bests) {
         const Rect card{m, y, cw, u(72)};
         c.fill_round(card, u(12), kCard);
-        c.text(card.x + u(14), card.y + u(12), kExercises[static_cast<std::size_t>(b.exercise)].name, s_mid_, kText);
-        c.text(card.x + u(14), card.y + u(12) + Canvas::text_height(s_mid_) + u(8), "BEST " + set_text(b.top),
-               s_small_, kDim);
+        const int block = Canvas::text_height(s_mid_) + u(8) + Canvas::text_height(s_small_);
+        const int ty = card.y + (card.h - block) / 2;
+        c.text(card.x + u(14), ty, kExercises[static_cast<std::size_t>(b.exercise)].name, s_mid_, kText);
+        c.text(card.x + u(14), ty + Canvas::text_height(s_mid_) + u(8), "BEST " + set_text(b.top), s_small_, kDim);
         right_aligned(c, card.right() - u(14), card.y + (card.h - Canvas::text_height(s_mid_)) / 2,
                       kg(e1rm_x10(b.top)) + " KG", s_mid_, kAccent);
         y = card.bottom() + u(10);
@@ -294,26 +340,51 @@ int App::draw_records(Canvas& c, int y) {
     return y;
 }
 
+int App::empty_state(Canvas& c, int y, int icon, std::string_view title, std::string_view hint) {
+    const int m = u(16), isz = u(36);
+    const Rect card{m, y, c.width() - 2 * m, u(40) + isz + u(14) + Canvas::text_height(s_mid_) + u(8) +
+                                                 Canvas::text_height(s_small_)};
+    c.fill_round(card, u(12), kCard);
+    draw_icon(c, static_cast<Icon>(icon), card.x + (card.w - isz) / 2, card.y + u(20), isz, kBtn);
+    const int ty = card.y + u(20) + isz + u(14);
+    centered(c, card, ty, title, s_mid_, kDim);
+    centered(c, card, ty + Canvas::text_height(s_mid_) + u(8), hint, s_small_, kDim);
+    return card.bottom();
+}
+
 void App::draw_header(Canvas& c) {
     const int hh = view_top_;
     c.fill({0, 0, c.width(), hh}, kCard);
-    const int ty = (hh - Canvas::text_height(s_mid_)) / 2;
-    c.text(u(16), ty, "GYM LOG", s_mid_, kAccent);
-    if (active_)
-        right_aligned(c, c.width() - u(16), (hh - Canvas::text_height(s_small_)) / 2, "WORKOUT ACTIVE", s_small_, kGood);
+    c.fill({0, hh - 1, c.width(), 1}, kLine);
+    const int isz = u(26), ty = (hh - Canvas::text_height(s_mid_)) / 2;
+    draw_icon(c, Icon::Dumbbell, u(16), (hh - isz) / 2, isz, kAccent);
+    c.text(u(16) + isz + u(10), ty, "GYM LOG", s_mid_, kText);
+    if (active_) {
+        const std::string_view label = "ACTIVE";
+        const int th = Canvas::text_height(s_small_), dot = u(8), pad = u(10);
+        const Rect pill{c.width() - u(16) - (2 * pad + dot + u(8) + Canvas::text_width(label, s_small_)),
+                        (hh - th - 2 * u(6)) / 2, 2 * pad + dot + u(8) + Canvas::text_width(label, s_small_), th + 2 * u(6)};
+        c.fill_round(pill, pill.h / 2, kGoodBg);
+        c.fill_round({pill.x + pad, pill.y + (pill.h - dot) / 2, dot, dot}, dot / 2, kGood);
+        c.text(pill.x + pad + dot + u(8), pill.y + u(6), label, s_small_, kGood);
+    }
 }
 
 void App::draw_tabs(Canvas& c, const Input& in) {
     const int h = c.height() - view_bottom_;
     c.fill({0, view_bottom_, c.width(), h}, kCard);
+    c.fill({0, view_bottom_, c.width(), 1}, kLine);
     constexpr std::array<std::string_view, 3> names{"WORKOUT", "HISTORY", "RECORDS"};
-    const int w = c.width() / 3;
+    constexpr std::array<Icon, 3> icons{Icon::Dumbbell, Icon::List, Icon::Bars};
+    const int w = c.width() / 3, isz = u(18), gap = u(6);
     for (int i = 0; i < 3; ++i) {
+        const auto k = static_cast<std::size_t>(i);
         const Rect r{i * w, view_bottom_, w, h};
         const bool selected = static_cast<int>(tab_) == i;
-        if (selected) c.fill({r.x, r.y, r.w, u(3)}, kAccent);
-        centered(c, r, r.y + (r.h - Canvas::text_height(s_small_)) / 2, names[static_cast<std::size_t>(i)], s_small_,
-                 selected ? kText : kDim);
+        const int top = r.y + (r.h - isz - gap - Canvas::text_height(s_small_)) / 2;
+        if (selected) c.fill_round({r.x + (r.w - u(40)) / 2, r.y, u(40), u(3)}, u(1), kAccent);
+        draw_icon(c, icons[k], r.x + (r.w - isz) / 2, top, isz, selected ? kAccent : kDim);
+        centered(c, r, top + isz + gap, names[k], s_small_, selected ? kText : kDim);
         if (tapped(in, r)) {
             tab_ = static_cast<Tab>(i);
             dirty_ = true;
@@ -328,7 +399,7 @@ void App::render(Canvas& c, const Input& in) {
     s_mid_ = std::max(2, u(1.6f));
     s_big_ = std::max(3, u(2.6f));
     view_top_ = u(56);
-    view_bottom_ = c.height() - u(60);
+    view_bottom_ = c.height() - u(64);
 
     c.clear(kBg);
 

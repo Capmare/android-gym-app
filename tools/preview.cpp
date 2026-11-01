@@ -1,6 +1,8 @@
 // Draws every screen with sample data and writes PPM images.
-// Usage: preview <output dir>
+// Usage: preview <output dir> [width height unit]
 #include <cstdio>
+#include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 
@@ -18,9 +20,11 @@ int main(int argc, char** argv) {
         {now - 60, {{0, 825, 5}, {4, 700, 8}}},
     };
 
-    App app(std::move(log), nullptr, 2.0f);
+    const int w = argc > 3 ? std::atoi(argv[2]) : 720, h = argc > 3 ? std::atoi(argv[3]) : 1440;
+    const float unit = argc > 4 ? std::strtof(argv[4], nullptr) : 2.0f;
+    App app(std::move(log), nullptr, unit);
     Canvas canvas;
-    canvas.resize(720, 1440);
+    canvas.resize(w, h);
     const auto t0 = App::Clock::now();
     app.frame(canvas, Input{}, t0);  // gives the app a clock
     app.log_set();                   // starts the rest timer so it shows on screen

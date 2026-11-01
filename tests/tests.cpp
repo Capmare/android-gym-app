@@ -119,10 +119,10 @@ void test_app() {
         CHECK(varied);
     }
 
-    // A tap on the LOG SET button adds a set. At this size the button is near y = 940.
+    // A tap on the LOG SET button adds a set. At this size the button is near y = 1090.
     app.set_tab(Tab::Workout);
     const auto before = app.log().back().sets.size();
-    Input tap{.x = 360, .y = 940, .press_x = 360, .press_y = 940, .down = false, .released = true};
+    Input tap{.x = 360, .y = 1090, .press_x = 360, .press_y = 1090, .down = false, .released = true};
     app.frame(canvas, tap, t0);
     CHECK(app.log().back().sets.size() == before + 1);
 
