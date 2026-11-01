@@ -1,0 +1,23 @@
+name: android
+on: [push, workflow_dispatch]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Host tests
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build
+          ctest --test-dir build --output-on-failure
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 17 }
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: 8.10.2 }
+      - name: Debug APK
+        working-directory: android
+        run: gradle assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gym-log-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
