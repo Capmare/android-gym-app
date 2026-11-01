@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- hasCode=false: the app has no Java or Kotlin code at all. -->
+    <application
+        android:label="Gym Log"
+        android:hasCode="false"
+        android:allowBackup="true"
+        android:theme="@style/AppTheme">
+        <activity
+            android:name="android.app.NativeActivity"
+            android:exported="true"
+            android:screenOrientation="portrait"
+            android:configChanges="orientation|keyboardHidden|screenSize|screenLayout|smallestScreenSize|density|uiMode">
+            <meta-data android:name="android.app.lib_name" android:value="gymlog" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
